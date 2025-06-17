@@ -21,6 +21,9 @@ EDEX_REPO = "https://github.com/GitSquared/edex-ui.git"
 REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git", "wget", "wireless_tools", "wpa_supplicant"]
 REQUIRED_COMMANDS = ["python3", "wget", "git"]
 
+# Set PATH
+os.environ["PATH"] = f"{os.environ['PATH']}:/usr/local/bin:/usr/bin:/bin"
+
 # Logging
 def log_message(message):
     try:
@@ -156,13 +159,13 @@ def display_error(stdscr, stage, error_msg):
         
         stage_info = f"Asama: {stage}"
         stage_col = max(0, (cols - len(stage_info)) // 2)
-        stdscr.addstr(rows//2, stage_col, stage_info)
+        stdscr.addstr(rows//2 - 1, stage_col, stage_info)
         
-        error_info = f"Hata: {error_msg[:cols-1]}"
+        error_info = f"Hata: {error_msg[:cols-4]}"
         error_col = max(0, (cols - len(error_info)) // 2)
-        stdscr.addstr(rows//2 + 2, error_col, error_info)
+        stdscr.addstr(rows//2 + 1, error_col, error_info)
         
-        stdscr.addstr(rows//2 + 4, 2, "Cikmak icin bir tusa basin")
+        stdscr.addstr(rows//2 + 3, 2, "Cikmak icin bir tusa basin")
         stdscr.refresh()
         stdscr.getch()
     except Exception as e:
@@ -263,9 +266,9 @@ def install_dependencies(stdscr, stages, current_stage):
         sub_statuses.append(f"{cmd} kontrol ediliyor")
         display_main(stdscr, stages, current_stage, sub_statuses[-1])
         try:
-            subprocess.run(["command", "-v", cmd], check=True, capture_output=True)
-            log_message(f"{cmd} bulundu")
-        except subprocess.CalledProcessError:
+            result = subprocess.run(["which", cmd], capture_output=True, text=True, check=True)
+            log_message(f"{cmd} bulundu: {result.stdout.strip()}")
+        except subprocess.CalledProcessError as e:
             sub_statuses.append(f"{cmd} yukleniyor")
             display_main(stdscr, stages, current_stage, sub_statuses[-1])
             try:
@@ -275,7 +278,7 @@ def install_dependencies(stdscr, stages, current_stage):
                 log_message(f"{cmd} yuklendi")
             except Exception as e:
                 log_message(f"{cmd} yuklenemedi: {e}")
-                raise Exception(f"{cmd} yuklenemedi: {e}")
+                display_error(stdscr, stages[current_stage][0], f"{cmd} yuklenemedi: {str(e)}")
 
     # Check Python requests
     sub_statuses.append("Python requests kontrol ediliyor")
@@ -291,7 +294,7 @@ def install_dependencies(stdscr, stages, current_stage):
             log_message("requests modulu yuklendi")
         except Exception as e:
             log_message(f"requests modulu yuklenemedi: {e}")
-            raise Exception(f"requests modulu yuklenemedi: {e}")
+            display_error(stdscr, stages[current_stage][0], f"requests modulu yuklenemedi: {str(e)}")
 
     # Check internet
     sub_statuses.append("Internet baglantisi kontrol ediliyor")
@@ -319,7 +322,7 @@ def install_dependencies(stdscr, stages, current_stage):
                 raise Exception(f"{package} yuklenemedi: {result.stderr}")
         except Exception as e:
             log_message(f"{package} yuklenemedi: {e}")
-            raise Exception(f"{package} yuklenemedi: {e}")
+            display_error(stdscr, stages[current_stage][0], f"{package} yuklenemedi: {str(e)}")
 
     # Check Node.js
     sub_statuses.append("Node.js kontrol ediliyor")
@@ -346,7 +349,7 @@ def install_dependencies(stdscr, stages, current_stage):
             log_message("Node.js ve npm yuklendi")
         except Exception as e:
             log_message(f"Node.js yuklenemedi: {e}")
-            raise Exception(f"Node.js yuklenemedi: {e}")
+            display_error(stdscr, stages[current_stage][0], f"Node.js yuklenemedi: {str(e)}")
 
     stages[current_stage] = (stages[current_stage][0], "HAZIR!")
     display_main(stdscr, stages, current_stage, "Bagimliliklar tamamlandi")
@@ -469,7 +472,7 @@ def install_edex_ui(stdscr, stages, current_stage):
     sub_statuses.append("npm bagimliliklari yukleniyor")
     display_main(stdscr, stages, current_stage, sub_statuses[-1])
     try:
-        subprocess.run(["sudo", "npm", "install"], cwd=EDEX_DIR, check=True, timeout=600)
+        subprocess.run(["sudo", "npm", "install", "--unsafe-perm"], cwd=EDEX_DIR, check=True, timeout=600)
         log_message("npm bagimliliklari yuklendi")
     except Exception as e:
         log_message(f"npm bagimliliklari yuklenemedi: {e}")
@@ -531,7 +534,7 @@ def start_edex_ui(stdscr, stages, current_stage):
     sub_statuses.append("EDEX-UI calistiriliyor")
     display_main(stdscr, stages, current_stage, sub_statuses[-1])
     try:
-        process = subprocess.Popen(["sudo", "npm", "start"], cwd=EDEX_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(["sudo", "npm", "start", "--unsafe-perm"], cwd=EDEX_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         time.sleep(5)
         if process.poll() is None:
             log_message("EDEX-UI baslatildi")
