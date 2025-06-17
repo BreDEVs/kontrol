@@ -7,11 +7,6 @@ import curses
 import shutil
 import json
 import hashlib
-try:
-    import requests
-except ImportError:
-    subprocess.run(["sudo", "pip3", "install", "requests"], check=True)
-    import requests
 
 # Configuration
 SYSTEM_NAME = "BerkeOS"
@@ -31,12 +26,21 @@ BOOTLOCAL_FILE = "/opt/bootlocal.sh"
 BOOTLOCAL_BACKUP = os.path.join(BACKUP_DIR, "bootlocal.sh.bak")
 REQUIRED_TCE_PACKAGES = ["python3.9", "nodejs", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git", "wireless_tools", "wpa_supplicant", "parted"]
 
+# Install requests if missing
+try:
+    import requests
+except ImportError:
+    subprocess.run(["sudo", "pip3", "install", "requests"], check=True)
+    import requests
+
 # Logging
 def log_message(message):
     try:
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        subprocess.run(["sudo", "chmod", "755", os.path.dirname(LOG_FILE)], check=True)
         with open(LOG_FILE, "a") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: {message}\n")
+        subprocess.run(["sudo", "chmod", "644", LOG_FILE], check=True)
     except Exception as e:
         print(f"Log yazma hatası: {e}")
 
@@ -58,6 +62,7 @@ def check_system():
     status = True
     errors = []
 
+    # CPU check
     try:
         with open("/proc/cpuinfo") as f:
             if "processor" not in f.read():
@@ -67,6 +72,7 @@ def check_system():
         errors.append(f"CPU kontrolü başarısız: {e}")
         status = False
 
+    # RAM check
     try:
         result = subprocess.run(["free", "-m"], capture_output=True, text=True, timeout=5)
         mem = int(result.stdout.splitlines()[1].split()[1])
@@ -77,18 +83,21 @@ def check_system():
         errors.append(f"RAM kontrolü başarısız: {e}")
         status = False
 
+    # Storage check
     try:
         if not os.path.exists("/dev/sda"):
             errors.append("Disk /dev/sda mevcut değil")
             status = False
         else:
             subprocess.run(["sudo", "mkdir", "-p", ROOT_DIR], check=True)
+            subprocess.run(["sudo", "chmod", "755", ROOT_DIR], check=True)
             try:
                 subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
             except subprocess.CalledProcessError:
                 log_message("Disk bağlama başarısız, biçimlendirme deneniyor...")
                 try:
-                    subprocess.run(["sudo", "parted", "/dev/sda", "mklabel", "msdos"], check=True)
+                    subprocess.run(["sudo", "fsck", "/dev/sda1", "-y"], check=True)
+                    subprocess.run(["sudo", "parted", "/dev/sda", "mklabel", "msdos"], check=True, stderr=subprocess.DEVNULL)
                     subprocess.run(["sudo", "parted", "/dev/sda", "mkpart", "primary", "ext4", "1MiB", "100%"], check=True)
                     subprocess.run(["sudo", "mkfs.ext4", "/dev/sda1"], check=True)
                     subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
@@ -96,11 +105,13 @@ def check_system():
                     errors.append(f"Disk biçimlendirme başarısız: {e}")
                     status = False
             subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
-            subprocess.run(["sudo", "chmod", "-R", "777", ROOT_DIR], check=True)
+            subprocess.run(["sudo", "mkdir", "-p", SYSTEM_DIR], check=True)
+            subprocess.run(["sudo", "chmod", "755", SYSTEM_DIR], check=True)
     except Exception as e:
         errors.append(f"Depolama yapılandırması başarısız: {e}")
         status = False
 
+    # Boot check
     try:
         with open("/etc/issue") as f:
             if "Tiny Core" not in f.read():
@@ -118,19 +129,19 @@ def check_system():
 def optimize_disk():
     log_message("Disk bölümleri optimize ediliyor...")
     try:
-        subprocess.run(["sudo", "fsck", "/dev/sda1", "-f"], check=True)
+        subprocess.run(["sudo", "fsck", "/dev/sda1", "-f", "-y"], check=True)
         subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
         dirs = [TCE_DIR, HOME_DIR, SYSTEM_DIR, APPS_DIR, BACKUP_DIR, os.path.join(SYSTEM_DIR, "logs")]
         for d in dirs:
             subprocess.run(["sudo", "mkdir", "-p", d], check=True)
-            subprocess.run(["sudo", "chmod", "777", d], check=True)
+            subprocess.run(["sudo", "chmod", "755", d], check=True)
         log_message("BerkeOS dosya sistemi oluşturuldu")
         return True
     except Exception as e:
         log_message(f"Disk optimizasyonu başarısız: {e}")
         return False
 
-# Network connection
+# Network connection (Wi-Fi and Ethernet)
 def check_and_connect_network(stdscr):
     log_message("Ağ bağlantısı kontrol ediliyor...")
     try:
@@ -139,8 +150,19 @@ def check_and_connect_network(stdscr):
             log_message("Ağ bağlantısı mevcut")
             return True
     except Exception as e:
-        log_message(f"Ağ bağlantısı yok, Wi-Fi taranıyor: {e}")
+        log_message(f"Ağ bağlantısı yok: {e}")
 
+    # Try Ethernet
+    try:
+        subprocess.run(["sudo", "udhcpc", "-i", "eth0"], check=True, timeout=10)
+        result = subprocess.run(["ping", "-c", "1", "google.com"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            log_message("Ethernet bağlantısı kuruldu")
+            return True
+    except Exception as e:
+        log_message(f"Ethernet bağlantısı başarısız, Wi-Fi deneniyor: {e}")
+
+    # Wi-Fi
     display_status(stdscr, "Wi-Fi ağları taranıyor...")
     try:
         result = subprocess.run(["sudo", "iwlist", "wlan0", "scan"], capture_output=True, text=True, timeout=10)
@@ -180,10 +202,12 @@ def check_and_connect_network(stdscr):
 
     display_status(stdscr, f"{selected_network} bağlanıyor...")
     try:
+        subprocess.run(["sudo", "chmod", "600", "/tmp/wpa.conf"], check=True, ignore_errors=True)
         with open("/tmp/wpa.conf", "w") as f:
             f.write(f'network={{\nssid="{selected_network}"\npsk="{password}"\n}}\n')
         subprocess.run(["sudo", "wpa_supplicant", "-B", "-i", "wlan0", "-c", "/tmp/wpa.conf"], check=True, timeout=10)
         subprocess.run(["sudo", "udhcpc", "-i", "wlan0"], check=True, timeout=10)
+        subprocess.run(["sudo", "rm", "-f", "/tmp/wpa.conf"], check=True)
         log_message(f"{selected_network} bağlandı")
         return True
     except Exception as e:
@@ -201,6 +225,7 @@ def install_tce_package(package_name):
             log_message(f"{package_name} yüklendi")
             with open(os.path.join(TCE_DIR, "onboot.lst"), "a") as f:
                 f.write(f"{package_name}\n")
+            subprocess.run(["sudo", "chmod", "644", os.path.join(TCE_DIR, "onboot.lst")], check=True)
             subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
         else:
             log_message(f"{package_name} yüklenemedi: {result.stderr}")
@@ -242,6 +267,7 @@ def install_node_npm():
             subprocess.run(["sudo", "tar", "-xJf", "/tmp/node.tar.xz", "-C", "/usr/local"], check=True, timeout=120)
             subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/node", "/usr/local/bin/node"], check=True)
             subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/npm", "/usr/local/bin/npm"], check=True)
+            subprocess.run(["sudo", "rm", "-f", "/tmp/node.tar.xz"], check=True)
             log_message("Node.js ve npm manuel yüklendi")
         return True
     except Exception as e:
@@ -255,7 +281,7 @@ def install_and_customize_edex_ui():
         log_message("EDEX-UI klonlanıyor...")
         try:
             subprocess.run(["sudo", "git", "clone", EDEX_REPO, EDEX_DIR], check=True, timeout=300)
-            subprocess.run(["sudo", "chmod", "-R", "777", EDEX_DIR], check=True)
+            subprocess.run(["sudo", "chmod", "-R", "755", EDEX_DIR], check=True)
             log_message("EDEX-UI klonlandı")
         except Exception as e:
             log_message(f"EDEX-UI klonlama başarısız: {e}")
@@ -288,7 +314,8 @@ def install_and_customize_edex_ui():
         with open("/tmp/settings.json", "w") as f:
             json.dump(settings, f, indent=2)
         subprocess.run(["sudo", "mv", "/tmp/settings.json", settings_path], check=True)
-        subprocess.run(["sudo", "chmod", "777", settings_path], check=True)
+        subprocess.run(["sudo", "chmod", "644", settings_path], check=True)
+        subprocess.run(["sudo", "rm", "-f", "/tmp/settings.json"], check=True)
         log_message("EDEX-UI ayarları özelleştirildi")
     except Exception as e:
         log_message(f"EDEX-UI ayarları özelleştirilemedi: {e}")
@@ -306,6 +333,7 @@ def install_and_customize_edex_ui():
             )
         subprocess.run(["sudo", "mv", "/tmp/xorg.conf", xorg_conf], check=True)
         subprocess.run(["sudo", "chmod", "644", xorg_conf], check=True)
+        subprocess.run(["sudo", "rm", "-f", "/tmp/xorg.conf"], check=True)
         log_message("Xorg optimize edildi")
     except Exception as e:
         log_message(f"Xorg optimizasyonu başarısız: {e}")
@@ -316,9 +344,15 @@ def install_and_customize_edex_ui():
 def start_edex_ui():
     log_message("EDEX-UI başlatılıyor...")
     try:
-        subprocess.Popen(["sudo", "npm", "start"], cwd=EDEX_DIR)
-        log_message("EDEX-UI başlatıldı")
-        return True
+        process = subprocess.Popen(["sudo", "npm", "start"], cwd=EDEX_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(5)
+        if process.poll() is None:
+            log_message("EDEX-UI başlatıldı")
+            return True
+        else:
+            stdout, stderr = process.communicate()
+            log_message(f"EDEX-UI başlatılamadı: {stderr.decode()}")
+            return False
     except Exception as e:
         log_message(f"EDEX-UI başlatılamadı: {e}")
         return False
@@ -328,6 +362,7 @@ def backup_system():
     log_message("Sistem yedekleniyor...")
     try:
         subprocess.run(["sudo", "mkdir", "-p", BACKUP_DIR], check=True)
+        subprocess.run(["sudo", "chmod", "755", BACKUP_DIR], check=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         backup_file = os.path.join(BACKUP_DIR, f"berkeos_backup_{timestamp}.tar.gz")
         dirs_to_backup = [HOME_DIR, SYSTEM_DIR, APPS_DIR, TCE_DIR]
@@ -337,7 +372,7 @@ def backup_system():
             log_message(f"Yedek oluşturuldu: {backup_file}, SHA256: {backup_hash}")
             with open(os.path.join(BACKUP_DIR, "backup_log.txt"), "a") as f:
                 f.write(f"{timestamp}: {backup_file}, SHA256: {backup_hash}\n")
-            subprocess.run(["sudo", "chmod", "777", os.path.join(BACKUP_DIR, "backup_log.txt")], check=True)
+            subprocess.run(["sudo", "chmod", "644", os.path.join(BACKUP_DIR, "backup_log.txt")], check=True)
         else:
             log_message("Yedek doğrulama başarısız")
         subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
@@ -352,6 +387,7 @@ def configure_bootlocal():
     try:
         if os.path.exists(BOOTLOCAL_FILE):
             subprocess.run(["sudo", "cp", BOOTLOCAL_FILE, BOOTLOCAL_BACKUP], check=True)
+            subprocess.run(["sudo", "chmod", "644", BOOTLOCAL_BACKUP], check=True)
             log_message(f"bootlocal.sh yedeği alındı: {BOOTLOCAL_BACKUP}")
 
         bootlocal_content = (
@@ -365,6 +401,7 @@ def configure_bootlocal():
             f.write(bootlocal_content)
         subprocess.run(["sudo", "mv", "/tmp/bootlocal.sh", BOOTLOCAL_FILE], check=True)
         subprocess.run(["sudo", "chmod", "+x", BOOTLOCAL_FILE], check=True)
+        subprocess.run(["sudo", "rm", "-f", "/tmp/bootlocal.sh"], check=True)
 
         current_hash = calculate_file_hash(BOOTLOCAL_FILE)
         if current_hash:
@@ -391,55 +428,52 @@ def load_config():
 def save_config(config):
     try:
         subprocess.run(["sudo", "mkdir", "-p", os.path.dirname(CONFIG_FILE)], check=True)
+        subprocess.run(["sudo", "chmod", "755", os.path.dirname(CONFIG_FILE)], check=True)
         with open("/tmp/config.json", "w") as f:
             json.dump(config, f, indent=2)
         subprocess.run(["sudo", "mv", "/tmp/config.json", CONFIG_FILE], check=True)
-        subprocess.run(["sudo", "chmod", "777", CONFIG_FILE], check=True)
+        subprocess.run(["sudo", "chmod", "644", CONFIG_FILE], check=True)
+        subprocess.run(["sudo", "rm", "-f", "/tmp/config.json"], check=True)
         subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
     except Exception as e:
         log_message(f"Konfigürasyon kaydedilemedi: {e}")
 
-# Main menu
-def main_menu(stdscr):
-    options = ["EDEX-UI Başlat", "Klasik Terminal", "Yedek Al", "Çıkış"]
-    selected = 0
-    while True:
-        stdscr.clear()
-        stdscr.addstr(0, 0, f"{SYSTEM_NAME} Ana Menü")
-        for i, option in enumerate(options):
-            if i == selected:
-                stdscr.addstr(i + 2, 0, f"> {option}", curses.A_REVERSE)
-            else:
-                stdscr.addstr(i + 2, 0, f"  {option}")
-        stdscr.refresh()
-        key = stdscr.getch()
-        if key == curses.KEY_UP and selected > 0:
-            selected -= 1
-        elif key == curses.KEY_DOWN and selected < len(options) - 1:
-            selected += 1
-        elif key == curses.KEY_ENTER or key in [10, 13]:
-            return selected
-
 # Display status
-def display_status(stdscr, status):
+def display_status(stdscr, status, error=False):
     try:
         stdscr.clear()
+        rows, cols = stdscr.getmaxyx()
         compact_ascii = (
-            "██████╗ ██████╗ ██████╗ ██╗  ██╗███████╗ ██████╗ \n"
-            "██╔══██╗██╔═══╝ ██╔══██╗██║ ██╔╝██╔════╝ ██╔═══╝ \n"
-            "██████╦╝█████╗  ██████╔╝█████═╝ █████╗   ██████╗ \n"
-            "██╔══██╗██╔══╝  ██╔══██╗██╔═██╗ ██╔══╝   ██╔═══╝ \n"
-            "██████╦╝███████╗██║  ██║██║ ╚██╗███████╗ ██████╗ \n"
-            "╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ \n"
+            "██████╗ ██████╗ ██████╗ ██╗  ██╗███████╗\n"
+            "██╔══██╗██╔═══╝ ██╔══██╗██║ ██╔╝██╔════╝\n"
+            "██████╦╝█████╗  ██████╔╝█████═╝ █████╗  \n"
+            "██╔══██╗██╔══╝  ██╔══██╗██╔═██╗ ██╔══╝  \n"
+            "██████╦╝███████╗██║  ██║██║ ╚██╗███████╗\n"
+            "╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝\n"
+            "Berke Oruç tarafından yapılmıştır\n"
         )
         lines = compact_ascii.splitlines()
-        for i, line in enumerate(lines):
-            stdscr.addstr(i, 0, line.rstrip())
-        stdscr.addstr(len(lines) + 1, 0, f"Durum: {status}")
+        start_row = max(0, (rows - len(lines) - 2) // 2)
+        start_col = max(0, (cols - max(len(line) for line in lines)) // 2)
+        if rows >= len(lines) + 2 and cols >= max(len(line) for line in lines):
+            for i, line in enumerate(lines):
+                stdscr.addstr(start_row + i, start_col, line.rstrip())
+            stdscr.addstr(start_row + len(lines) + 1, start_col, f"Durum: {status}")
+            if not error:
+                stdscr.addstr(start_row + len(lines) + 2, start_col, "Devam etmek için bir tuşa basın...")
+        else:
+            stdscr.addstr(0, 0, f"Durum: {status}")
+            if not error:
+                stdscr.addstr(1, 0, "Devam etmek için bir tuşa basın...")
         stdscr.refresh()
+        if not error:
+            stdscr.getch()
     except Exception as e:
         log_message(f"Ekran güncelleme başarısız: {e}")
-        print(f"Durum: {status}")
+        print(f"Durum: {status}\nBerke Oruç tarafından yapılmıştır")
+        if not error:
+            print("Devam etmek için bir tuşa basın...")
+            input()
 
 def main(stdscr):
     try:
@@ -462,21 +496,21 @@ def main(stdscr):
     system_status, errors = check_system()
     if not system_status:
         error_msg = "Hata: Sistem uygun değil! Hatalar: " + "; ".join(errors)
-        display_status(stdscr, error_msg)
+        display_status(stdscr, error_msg, error=True)
         log_message(error_msg)
         time.sleep(5)
         return
 
     display_status(stdscr, "Disk bölümleri optimize ediliyor...")
     if not optimize_disk():
-        display_status(stdscr, "Hata: Disk optimizasyonu başarısız!")
+        display_status(stdscr, "Hata: Disk optimizasyonu başarısız!", error=True)
         log_message("Disk optimizasyonu başarısız")
         time.sleep(5)
         return
 
     display_status(stdscr, "Ağ bağlantısı kontrol ediliyor...")
     if not check_and_connect_network(stdscr):
-        display_status(stdscr, "Hata: Ağ bağlantısı sağlanamadı!")
+        display_status(stdscr, "Hata: Ağ bağlantısı sağlanamadı!", error=True)
         log_message("Ağ bağlantısı sağlanamadı")
         time.sleep(5)
         return
@@ -490,72 +524,53 @@ def main(stdscr):
 
     display_status(stdscr, "Node.js ve npm yükleniyor...")
     if not install_node_npm():
-        display_status(stdscr, "Hata: Node.js veya npm yüklenemedi!")
+        display_status(stdscr, "Hata: Node.js veya npm yüklenemedi!", error=True)
         log_message("Node.js veya npm yüklenemedi")
         time.sleep(5)
         return
 
     display_status(stdscr, "EDEX-UI yükleniyor...")
     if not install_and_customize_edex_ui():
-        display_status(stdscr, "Hata: EDEX-UI yüklenemedi!")
+        display_status(stdscr, "Hata: EDEX-UI yüklenemedi!", error=True)
         log_message("EDEX-UI yüklenemedi")
         time.sleep(5)
         return
 
     display_status(stdscr, "bootlocal.sh yapılandırılıyor...")
     if not configure_bootlocal():
-        display_status(stdscr, "Hata: Önyükleme yapılandırması başarısız!")
+        display_status(stdscr, "Hata: Önyükleme yapılandırması başarısız!", error=True)
         log_message("Önyükleme yapılandırması başarısız")
         time.sleep(5)
         return
 
     display_status(stdscr, "Sistem yedekleniyor...")
     if not backup_system():
-        display_status(stdscr, "Uyarı: Yedekleme başarısız, devam ediliyor...")
-        log_message("Yedekleme başarısız, devam ediliyor")
-        time.sleep(3)
+        display_status(stdscr, "Hata: Yedekleme başarısız!", error=True)
+        log_message("Yedekleme başarısız")
+        time.sleep(5)
+        return
 
-    stdscr.clear()
-    stdscr.addstr(0, 0, "EDEX-UI her başlangıçta varsayılan olarak başlatılsın mı? (e/h)")
-    stdscr.refresh()
     try:
+        stdscr.clear()
+        stdscr.addstr(0, 0, "EDEX-UI her başlangıçta varsayılan olarak başlatılsın mı? (e/h)")
+        stdscr.refresh()
         choice = stdscr.getch()
         config["default_edex"] = choice == ord("e")
         save_config(config)
     except Exception as e:
         log_message(f"Varsayılan seçim alınamadı: {e}")
 
-    while True:
-        choice = main_menu(stdscr)
-        if choice == 0:
-            display_status(stdscr, "EDEX-UI başlatılıyor...")
-            if start_edex_ui():
-                display_status(stdscr, f"{SYSTEM_NAME} EDEX-UI HAZIR!")
-            else:
-                display_status(stdscr, "Hata: EDEX-UI başlatılamadı!")
-                log_message("EDEX-UI başlatılamadı")
-            time.sleep(5)
-        elif choice == 1:
-            stdscr.clear()
-            stdscr.refresh()
-            curses.endwin()
-            subprocess.run(["bash"])
-            break
-        elif choice == 2:
-            display_status(stdscr, "Sistem yedekleniyor...")
-            if backup_system():
-                display_status(stdscr, "Yedekleme tamamlandı!")
-                log_message("Yedekleme tamamlandı")
-            else:
-                display_status(stdscr, "Hata: Yedekleme başarısız!")
-                log_message("Yedekleme başarısız")
-            time.sleep(3)
-        elif choice == 3:
-            break
+    display_status(stdscr, f"{SYSTEM_NAME} Kurulum Tamamlandı!")
+    if start_edex_ui():
+        display_status(stdscr, f"{SYSTEM_NAME} EDEX-UI HAZIR!", error=True)
+    else:
+        display_status(stdscr, "Hata: EDEX-UI başlatılamadı!", error=True)
+        log_message("EDEX-UI başlatılamadı")
+        time.sleep(5)
 
 if __name__ == "__main__":
     try:
         curses.wrapper(main)
     except Exception as e:
         log_message(f"{SYSTEM_NAME} çöktü: {e}")
-        print(f"Hata: {e}")
+        print(f"Hata: {e}\nBerke Oruç tarafından yapılmıştır")
