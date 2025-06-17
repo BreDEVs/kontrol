@@ -23,7 +23,7 @@ LOG_DIR = Path("/var/log/berke")
 LOG_FILE = LOG_DIR / "install.log"
 EDEX_DIR = APP_DIR / "edex-ui"
 NODE_VERSION = "16.20.2"
-NODE_URL = f"https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz"
+NODE_URL = "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz"
 EDEX_URL = "https://github.com/GitSquared/edex-ui.git"
 BOOT_SCRIPT = Path("/opt/bootlocal.sh")
 REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "libXext", "fontconfig", "git", "wget", "curl", "tar"]
@@ -197,7 +197,8 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
                 break
             if i == current_stage and status == "/":
                 stdscr.attron(curses.color_pair(4))
-                stage_text = f"{i+1}. {stage_name} [{'/-\\|'[int(time.time() * 4) % 4]}]"
+                anim_chars = "/-\\|"
+                stage_text = f"{i+1}. {stage_name} [{anim_chars[int(time.time() * 4) % 4]}]"
                 stdscr.addstr(row, stage_x, stage_text[:box_width-4], curses.A_BOLD)
                 sub_status_text = f"Status: {sub_status[:box_width-10]}"
                 sub_status_x = box_x + 2
