@@ -37,6 +37,7 @@ USER = "tc"
 GROUP = "staff"
 MIN_DISK_SPACE_GB = 2
 MAX_LOG_AGE_DAYS = 7
+SUPPORTED_FILESYSTEMS = ["ext4", "vfat", "ext3", "ntfs"]
 
 # Environment setup
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"
@@ -112,7 +113,13 @@ def center_text(text: str, width: int) -> Tuple[str, int]:
 def display_error(stdscr, stage: str, error_msg: str, logger: Optional[logging.Logger], suggestion: str = "") -> None:
     specific_suggestions = {
         "DEPENDENCIES": "Check internet connection and ensure tce-load is installed. Try 'sudo tce-load -wi <package>'.",
-        "DISK SETUP": "Verify disk is connected, formatted (ext4/vfat), and has at least 2 GB free. Check /proc/partitions or install util-linux: 'sudo tce-load -wi util-linux'.",
+        "DISK SETUP": (
+            "Verify disk is connected and formatted (ext4/vfat/ext3/ntfs). "
+            "Check /proc/partitions: 'cat /proc/partitions'. "
+            "List disks: 'ls /dev/sd* /dev/nvme*'. "
+            "Try mounting manually: 'sudo mount /dev/sda1 /mnt/disk'. "
+            "Install util-linux for blkid: 'sudo tce-load -wi util-linux'."
+        ),
         "eDEX-UI DOWNLOAD": "Ensure GitHub is accessible and git is installed: 'sudo tce-load -wi git'.",
         "eDEX-UI INSTALL": "Verify Node.js and npm are installed correctly. Check node version: 'node -v'.",
         "eDEX-UI START": "Check Xorg installation ('sudo tce-load -wi Xorg-7.7') and display settings ('echo $DISPLAY'). Ensure Node.js is in PATH."
@@ -199,7 +206,7 @@ def fix_permissions(path: Path, logger: Optional[logging.Logger] = None) -> None
         raise Exception(f"Permission fix failed: {e}")
 
 # Detect disk
-def detect_disk(logger: Optional[logging.Logger]) -> Tuple[Path, str]:
+def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, str]:
     try:
         mount_point = Path("/mnt/disk")
         mount_point.mkdir(parents=True, exist_ok=True)
@@ -207,9 +214,8 @@ def detect_disk(logger: Optional[logging.Logger]) -> Tuple[Path, str]:
         mount_cmd = shutil.which("mount")
         if not mount_cmd:
             raise Exception("mount command not found. Install coreutils: 'sudo tce-load -wi coreutils'")
-        
+
         # Check /proc/partitions for available disks
-        disks = ["/dev/sda1", "/dev/sdb1", "/dev/nvme0n1p1"]
         available_disks = []
         try:
             with open("/proc/partitions", "r") as f:
@@ -218,15 +224,25 @@ def detect_disk(logger: Optional[logging.Logger]) -> Tuple[Path, str]:
                     parts = line.strip().split()
                     if len(parts) >= 4:
                         disk_name = f"/dev/{parts[3]}"
-                        if disk_name in disks:
+                        # Filter out non-partition devices (e.g., sda, nvme0n1)
+                        if any(disk_name.startswith(prefix) for prefix in ["/dev/sd", "/dev/nvme", "/dev/hd"]) and disk_name[-1].isdigit():
                             available_disks.append(disk_name)
         except FileNotFoundError:
             raise Exception("/proc/partitions not found. Ensure kernel supports partitions.")
-        
-        if not available_disks:
-            raise Exception("No suitable disk found in /proc/partitions. Check connected disks.")
 
-        # Check /proc/mounts for filesystem type
+        if not available_disks:
+            disk_list = "None detected"
+            try:
+                disk_list = ", ".join(os.listdir("/dev") if os.path.exists("/dev") else ["No /dev"])
+            except Exception:
+                pass
+            raise Exception(f"No suitable disk found in /proc/partitions. Available devices: {disk_list}. Ensure a disk is connected.")
+
+        # Log detected disks
+        log_message(f"Detected disks: {', '.join(available_disks)}", logger)
+        print(f"[{SYSTEM_NAME}] Detected disks: {', '.join(available_disks)}")
+
+        # Check /proc/mounts for filesystem type and mount status
         for disk in available_disks:
             try:
                 with open("/proc/mounts", "r") as f:
@@ -235,26 +251,79 @@ def detect_disk(logger: Optional[logging.Logger]) -> Tuple[Path, str]:
                         if disk in line:
                             parts = line.split()
                             fstype = parts[2]
-                            if fstype not in ["ext4", "vfat"]:
+                            if fstype not in SUPPORTED_FILESYSTEMS:
+                                log_message(f"Disk {disk} has unsupported filesystem: {fstype}", logger, "warning")
                                 continue
                             current_mount = parts[1]
                             if current_mount != str(mount_point):
-                                subprocess.run([mount_cmd, "-o", "remount,rw", current_mount], check=True, timeout=TIMEOUT_SECONDS)
+                                try:
+                                    subprocess.run([mount_cmd, "-o", "remount,rw", current_mount], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
+                                    log_message(f"Disk {disk} remounted read-write at {current_mount}", logger)
+                                    return Path(current_mount), disk
+                                except subprocess.CalledProcessError as e:
+                                    log_message(f"Failed to remount {disk} at {current_mount}: {e.stderr}", logger, "warning")
+                                    continue
                             log_message(f"Disk {disk} already mounted at {current_mount}", logger)
                             return Path(current_mount), disk
                 # Disk not mounted, try mounting
-                subprocess.run([mount_cmd, disk, str(mount_point)], check=True, timeout=TIMEOUT_SECONDS)
-                subprocess.run([mount_cmd, "-o", "remount,rw", str(mount_point)], check=True, timeout=TIMEOUT_SECONDS)
-                fix_permissions(mount_point, logger)
-                log_message(f"Disk {disk} mounted at {mount_point}", logger)
-                return mount_point, disk
+                try:
+                    result = subprocess.run([mount_cmd, disk, str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
+                    subprocess.run([mount_cmd, "-o", "remount,rw", str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
+                    fix_permissions(mount_point, logger)
+                    log_message(f"Disk {disk} mounted at {mount_point}", logger)
+                    print(f"[{SYSTEM_NAME}] Disk {disk} mounted at {mount_point}")
+                    return mount_point, disk
+                except subprocess.CalledProcessError as e:
+                    log_message(f"Failed to mount {disk} at {mount_point}: {e.stderr}", logger, "warning")
+                    continue
             except Exception as e:
-                log_message(f"Failed to mount {disk}: {e}", logger, "warning")
+                log_message(f"Error processing disk {disk}: {e}", logger, "warning")
                 continue
-        
-        raise Exception("No suitable disk found. Ensure a disk is connected and formatted (ext4/vfat).")
+
+        # If no disk is suitable, provide detailed error
+        disk_info = []
+        try:
+            for disk in available_disks:
+                blkid_cmd = shutil.which("blkid")
+                if blkid_cmd:
+                    result = subprocess.run([blkid_cmd, disk], capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+                    disk_info.append(f"{disk}: {result.stdout.strip()}")
+                else:
+                    disk_info.append(f"{disk}: No blkid info (install util-linux: 'sudo tce-load -wi util-linux')")
+        except Exception:
+            disk_info = ["Unable to retrieve disk info"]
+
+        error_msg = (
+            f"No suitable disk found. Ensure a disk is connected and formatted ({'/'.join(SUPPORTED_FILESYSTEMS)}).\n"
+            f"Detected disks: {', '.join(available_disks) if available_disks else 'None'}\n"
+            f"Disk info: {'; '.join(disk_info)}\n"
+            "Try: 'cat /proc/partitions', 'ls /dev/sd* /dev/nvme*', or manual mount: 'sudo mount /dev/sda1 /mnt/disk'"
+        )
+        raise Exception(error_msg)
     except Exception as e:
         log_message(f"Disk detection failed: {e}", logger, "error")
+        if stdscr is None:  # Fallback for non-curses mode
+            print(f"[{SYSTEM_NAME}] ERROR: Disk detection failed: {e}", file=sys.stderr)
+            print(f"[{SYSTEM_NAME}] Suggestion: {specific_suggestions['DISK SETUP']}", file=sys.stderr)
+            # Prompt user for manual disk path
+            try:
+                print(f"[{SYSTEM_NAME}] Enter disk device (e.g., /dev/sda1) or press Enter to exit: ", end="")
+                disk_input = input().strip()
+                if not disk_input:
+                    sys.exit(1)
+                if not os.path.exists(disk_input):
+                    raise Exception(f"Invalid disk device: {disk_input}")
+                try:
+                    subprocess.run([mount_cmd, disk_input, str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
+                    subprocess.run([mount_cmd, "-o", "remount,rw", str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
+                    fix_permissions(mount_point, logger)
+                    log_message(f"Manually mounted {disk_input} at {mount_point}", logger)
+                    return mount_point, disk_input
+                except subprocess.CalledProcessError as e:
+                    raise Exception(f"Failed to mount {disk_input}: {e.stderr}")
+            except Exception as input_e:
+                log_message(f"Manual disk input failed: {input_e}", logger, "error")
+                raise Exception(f"Disk detection failed: {e}. Manual input also failed: {input_e}")
         raise
 
 # Check internet connection
@@ -279,7 +348,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         if not check_internet(logger):
             raise Exception("No internet connection. Connect to a network and try again.")
         for cmd in REQUIRED_COMMANDS:
-            sub_status = f"Checking {cmd}"
+            sub_status = f"Checking {cmd}..."
             if stdscr:
                 update_display(stdscr, stages, current_stage, sub_status, logger)
             cmd_path = shutil.which(cmd)
@@ -287,8 +356,9 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 suggestion = f"Install {cmd}: 'sudo tce-load -wi {'coreutils' if cmd == 'mount' else cmd}'"
                 raise Exception(f"Required command {cmd} not found. {suggestion}")
             log_message(f"{cmd} found: {cmd_path}", logger)
+            print(f"[{SYSTEM_NAME}] {cmd} found: {cmd_path}")
         for pkg in REQUIRED_TCE_PACKAGES:
-            sub_status = f"Installing {pkg}"
+            sub_status = f"Installing {pkg}..."
             if stdscr:
                 update_display(stdscr, stages, current_stage, sub_status, logger)
             tce_status_cmd = shutil.which("tce-status")
@@ -300,12 +370,13 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 if not tce_load_cmd:
                     raise Exception("tce-load command not found. Install tce: 'sudo tce-load -wi tce'")
                 try:
-                    subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300)
+                    subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300, capture_output=True, text=True)
                     log_message(f"{pkg} installed", logger)
-                except Exception as e:
-                    raise Exception(f"Failed to install {pkg}: {e}. Try manually: 'sudo tce-load -wi {pkg}'")
+                    print(f"[{SYSTEM_NAME}] {pkg} installed")
+                except subprocess.CalledProcessError as e:
+                    raise Exception(f"Failed to install {pkg}: {e.stderr}. Try manually: 'sudo tce-load -wi {pkg}'")
             fix_permissions(TCE_DIR, logger)
-        sub_status = "Installing Node.js"
+        sub_status = "Installing Node.js..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         node_cmd = shutil.which("node")
@@ -317,14 +388,14 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 raise Exception("wget command not found. Install wget: 'sudo tce-load -wi wget'")
             for attempt in range(RETRY_ATTEMPTS):
                 try:
-                    subprocess.run([wget_cmd, "-O", str(node_tar), NODE_URL], check=True, timeout=300)
+                    subprocess.run([wget_cmd, "-O", str(node_tar), NODE_URL], check=True, timeout=300, capture_output=True, text=True)
                     with open(node_tar, "rb") as f:
                         if hashlib.sha256(f.read()).hexdigest() != NODE_CHECKSUM:
                             raise Exception("Node.js checksum mismatch")
                     break
-                except Exception as e:
+                except subprocess.CalledProcessError as e:
                     if attempt == RETRY_ATTEMPTS - 1:
-                        raise Exception(f"Node.js download failed after {RETRY_ATTEMPTS} attempts: {e}")
+                        raise Exception(f"Node.js download failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
                     time.sleep(2)
             target_dir.mkdir(parents=True, exist_ok=True)
             tar_cmd = shutil.which("tar")
@@ -342,6 +413,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
             if not node_cmd or f"v{NODE_VERSION}" not in subprocess.run([node_cmd, "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS).stdout:
                 raise Exception(f"Node.js v{NODE_VERSION} installation verification failed")
             log_message(f"Node.js v{NODE_VERSION} installed", logger)
+            print(f"[{SYSTEM_NAME}] Node.js v{NODE_VERSION} installed")
         sub_status = "Dependencies installed"
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -353,19 +425,19 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
 # Verify disk
 def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logger: Optional[logging.Logger], disk_device: str) -> None:
     log_message("Verifying disk", logger)
-    print(f"[{SYSTEM_NAME}] Verifying disk...")
+    print(f"[{SYSTEM_NAME}] Verifying disk {disk_device}...")
     sub_status = ""
 
     try:
         clean_temp(logger)
-        sub_status = "Checking disk space"
+        sub_status = "Checking disk space..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         disk_usage = shutil.disk_usage(BASE_DIR)
         free_space_gb = disk_usage.free / (1024 ** 3)
         if free_space_gb < MIN_DISK_SPACE_GB:
             raise Exception(f"Insufficient disk space: {free_space_gb:.2f} GB available, need {MIN_DISK_SPACE_GB} GB")
-        sub_status = "Creating directories"
+        sub_status = "Creating directories..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -373,7 +445,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
         sub_status = "Disk verified"
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
-        print(f"[{SYSTEM_NAME}] Disk verified successfully")
+        print(f"[{SYSTEM_NAME}] Disk {disk_device} verified successfully")
     except Exception as e:
         log_message(f"Disk verification failed: {e}", logger, "error")
         display_error(stdscr, stages[current_stage][0], str(e), logger)
@@ -388,7 +460,7 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
         clean_temp(logger)
         if not check_internet(logger):
             raise Exception("No internet connection. Connect to a network and try again.")
-        sub_status = "Cloning eDEX-UI"
+        sub_status = "Cloning eDEX-UI..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         if EDEX_DIR.exists():
@@ -398,11 +470,11 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
             raise Exception("git command not found. Install git: 'sudo tce-load -wi git'")
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                subprocess.run([git_cmd, "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600)
+                subprocess.run([git_cmd, "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600, capture_output=True, text=True)
                 break
-            except Exception as e:
+            except subprocess.CalledProcessError as e:
                 if attempt == RETRY_ATTEMPTS - 1:
-                    raise Exception(f"eDEX-UI clone failed after {RETRY_ATTEMPTS} attempts: {e}")
+                    raise Exception(f"eDEX-UI clone failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
                 time.sleep(2)
         fix_permissions(EDEX_DIR, logger)
         if not (EDEX_DIR / "package.json").exists():
@@ -418,12 +490,10 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
 # Install eDEX-UI
 def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, logger: Optional[logging.Logger]) -> None:
     log_message("Installing eDEX-UI", logger)
-    print(f"[{SYSTEM_NAME}] Installing eDEX-UI...")
-    sub_status = ""
-
+    print(f"Installing eDEX-UI...")
     try:
         clean_temp(logger)
-        sub_status = "Installing npm dependencies"
+        sub_status = "Installing npm dependencies..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         npm_cmd = shutil.which("npm")
@@ -433,14 +503,13 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                subprocess.run([npm_cmd, "install"], cwd=str(EDEX_DIR), check=True, timeout=600, env=env)
-                break
-            except Exception as e:
+                subprocess.run([npm_cmd, "install"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True, text=True, env=env)
+            except subprocess.CalledProcessError as e:
                 if attempt == RETRY_ATTEMPTS - 1:
-                    raise Exception(f"npm install failed after {RETRY_ATTEMPTS} attempts: {e}")
+                    raise Exception(f"npm install failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
                 time.sleep(2)
         fix_permissions(EDEX_DIR / "node_modules", logger)
-        sub_status = "Configuring eDEX-UI"
+        sub_status = "Configuring eDEX-UI..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         settings_path = EDEX_DIR / "settings.json"
@@ -451,11 +520,12 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             "autoStart": True
         }
         with open(settings_path, "w") as f:
-            json.dump(settings, f, indent=2)
+            json.dump(settings, f, indent=4)
         fix_permissions(settings_path, logger)
-        sub_status = "eDEX-UI installed"
+        sub_status = "SUCCESS"
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
+        log_message("eDEX-UI installed successfully", logger)
         print(f"[{SYSTEM_NAME}] eDEX-UI installed successfully")
     except Exception as e:
         log_message(f"eDEX-UI installation failed: {e}", logger, "error")
@@ -486,7 +556,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
 
     try:
         clean_temp(logger)
-        sub_status = "Starting Xorg"
+        sub_status = "Starting Xorg..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         os.environ["DISPLAY"] = ":0"
@@ -495,16 +565,16 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             raise Exception("Xorg command not found. Install Xorg: 'sudo tce-load -wi Xorg-7.7'")
         xorg_process = subprocess.Popen(
             [xorg_cmd, ":0", "-quiet"],
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             preexec_fn=os.setsid
         )
-        time.sleep(5)
+        time.sleep(2)
         if xorg_process.poll() is not None:
-            stderr = xorg_process.communicate(timeout=5)[1]
+            stdout, stderr = xorg_process.communicate(timeout=5)
             raise Exception(f"Xorg failed to start: {stderr}")
-        sub_status = "Launching eDEX-UI"
+        sub_status = "Launching eDEX-UI..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
         env = os.environ.copy()
@@ -512,7 +582,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
         env["DISPLAY"] = ":0"
         npm_cmd = shutil.which("npm")
         if not npm_cmd:
-            raise Exception("npm command not found. Ensure Node.js is installed: 'node -v'")
+            raise Exception("npm command not found. Ensure npm is installed: 'npm -v'")
         process = subprocess.Popen(
             [npm_cmd, "start"],
             cwd=str(EDEX_DIR),
@@ -559,14 +629,15 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             return False
         xorg_process = subprocess.Popen(
             [xorg_cmd, ":0", "-quiet"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             preexec_fn=os.setsid
         )
-        time.sleep(5)
+        time.sleep(2)
         if xorg_process.poll() is not None:
-            log_message("Xorg test failed", logger, "warning")
-            os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
+            stdout, stderr = xorg_process.communicate(timeout=5)
+            log_message(f"Xorg test failed: {stderr}", logger, "warning")
             return False
         process = subprocess.Popen(
             [npm_cmd, "start"],
@@ -577,7 +648,7 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             preexec_fn=os.setsid,
             env=env
         )
-        time.sleep(5)
+        time.sleep(10)
         if process.poll() is None:
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             process.wait(timeout=5)
@@ -587,28 +658,35 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             print(f"[{SYSTEM_NAME}] eDEX-UI check passed")
             return True
         stdout, stderr = process.communicate(timeout=5)
-        log_message(f"eDEX-UI quick check failed: {stderr}", logger, "warning")
+        log_message(f"eDEX-UI check failed: {stderr}", logger, "warning")
         os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
         return False
     except Exception as e:
         log_message(f"eDEX-UI quick check failed: {e}", logger, "error")
         return False
+    finally:
+        if 'xorg_process' in locals():
+            os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
 
 # Generate setup report
-def generate_setup_report(start_time: float, errors: List[str], logger: Optional[logging.Logger]) -> None:
+def generate_setup_report(start_time: float, attempts: List[str], logger: Optional[logging.Logger]) -> None:
     try:
         duration = time.time() - start_time
         disk_usage = shutil.disk_usage(BASE_DIR)
-        used_space_gb = (disk_usage.total - disk_usage.free) / (1024 ** 3)
-        report = [
-            f"BERKE OS Setup Report",
-            f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Duration: {duration:.2f} seconds",
-            f"Disk Usage: {used_space_gb:.2f} GB",
-            f"Errors Encountered: {len(errors)}",
-            "\nErrors:"
-        ]
-        report.extend(errors if errors else ["None"])
+        used_space_GB = (disk_usage.total - disk_usage.free) / (1024 ** 3)
+        report = []
+        report.append(f"[{SYSTEM_NAME}] Setup Report")
+        report.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        report.append(f"Duration: {duration:.2f} seconds")
+        report.append(f"Disk Usage: {used_space_GB:.2f} GB")
+        report.append(f"Errors Encountered: {len(attempts)}")
+        report.append("")
+        report.append("Errors:")
+        if len(attempts) == 0:
+            report.append("None")
+        else:
+            for error in attempts:
+                report.append(error)
         with open(REPORT_FILE, "w") as f:
             f.write("\n".join(report))
         fix_permissions(REPORT_FILE, logger)
@@ -624,16 +702,16 @@ def main(stdscr=None) -> bool:
     start_time = time.time()
     errors = []
     log_message(f"{SYSTEM_NAME} setup started", logger)
-    print(f"[{SYSTEM_NAME}] Starting setup...")
+    print(f"[{SYSTEM_NAME}] Starting setup at {time.strftime('%H:%M:%S')}...")
 
     try:
-        BASE_DIR, disk_device = detect_disk(logger)
+        BASE_DIR, disk_device = detect_disk(logger, stdscr)
         TCE_DIR = BASE_DIR / "tce"
         APP_DIR = BASE_DIR / "apps"
         EDEX_DIR = APP_DIR / "edex-ui"
         fix_permissions(BASE_DIR, logger)
     except Exception as e:
-        errors.append(f"Disk setup: {e}")
+        errors.append(f"Disk setup: {str(e)}")
         log_message(f"Disk setup failed: {e}", logger, "error")
         display_error(stdscr, "DISK SETUP", str(e), logger)
 
@@ -646,8 +724,8 @@ def main(stdscr=None) -> bool:
                 raise Exception(f"Terminal too small: need {MIN_TERM_SIZE[1]}x{MIN_TERM_SIZE[0]}")
             curses.start_color()
             curses.init_pair(1, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-            curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
-            curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
+            curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+            curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
             curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
         except Exception as e:
             log_message(f"Curses setup failed: {e}", logger, "warning")
