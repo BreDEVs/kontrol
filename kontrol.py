@@ -16,12 +16,11 @@ BACKUP_DIR = os.path.join(ROOT_DIR, "backups")
 LOG_FILE = os.path.join(SYSTEM_DIR, "logs", "install_log.txt")
 EDEX_DIR = os.path.join(APPS_DIR, "edex-ui")
 CONFIG_FILE = os.path.join(SYSTEM_DIR, "berkeos_config.json")
-TCE_REPO = "http://repo.tinycorelinux.net"
 NODE_VERSION = "16.20.2"
 EDEX_REPO = "https://github.com/GitSquared/edex-ui.git"
 BOOTLOCAL_FILE = "/opt/bootlocal.sh"
 BOOTLOCAL_BACKUP = os.path.join(BACKUP_DIR, "bootlocal.sh.bak")
-REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git", "wireless_tools", "wpa_supplicant"]
+REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git"]
 
 # Install requests if missing
 try:
@@ -68,7 +67,7 @@ def verify_disk(stdscr):
                 subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
             except Exception as e:
                 log_message(f"Disk bicimlendirme basarisiz: {e}")
-                display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", False, "Hata")
+                display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", False, "HATA!")
                 return False
         subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
         dirs = [TCE_DIR, SYSTEM_DIR, APPS_DIR, BACKUP_DIR, os.path.join(SYSTEM_DIR, "logs")]
@@ -76,11 +75,11 @@ def verify_disk(stdscr):
             subprocess.run(["sudo", "mkdir", "-p", d], check=True)
             subprocess.run(["sudo", "chmod", "755", d], check=True)
         log_message("Disk dogrulama tamamlandi")
-        display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", True, "Yuklendi")
+        display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", True, "HAZIR!")
         return True
     except Exception as e:
         log_message(f"Disk dogrulama basarisiz: {e}")
-        display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", False, "Hata")
+        display_status(stdscr, "DISK YAPILANDIRMA", "disk baglaniyor", False, "HATA!")
         return False
 
 # Verify dependencies
@@ -96,7 +95,7 @@ def verify_dependencies(stdscr):
             log_message("requests modulu yuklendi")
         except Exception as e:
             log_message(f"requests modulu yuklenemedi: {e}")
-            display_status(stdscr, "BAGIMLILIK YUKLEME", "python modulleri yukleniyor", False, "Hata")
+            display_status(stdscr, "BAGIMLILIK YUKLEME", "python modulleri yukleniyor", False, "HATA!")
             return False
 
     try:
@@ -116,11 +115,16 @@ def verify_dependencies(stdscr):
             subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/npm", "/usr/local/bin/npm"], check=True)
             subprocess.run(["sudo", "rm", "-f", "/tmp/node.tar.xz"], check=True)
             log_message("Node.js ve npm manuel yuklendi")
+            # Verify again
+            if subprocess.run(["npm", "-v"], capture_output=True, timeout=5).returncode != 0:
+                log_message("npm dogrulama basarisiz")
+                display_status(stdscr, "BAGIMLILIK YUKLEME", "nodejs yukleniyor", False, "HATA!")
+                return False
         except Exception as e:
             log_message(f"Node.js ve npm kurulumu basarisiz: {e}")
-            display_status(stdscr, "BAGIMLILIK YUKLEME", "nodejs yukleniyor", False, "Hata")
+            display_status(stdscr, "BAGIMLILIK YUKLEME", "nodejs yukleniyor", False, "HATA!")
             return False
-    display_status(stdscr, "BAGIMLILIK YUKLEME", "nodejs ve python modulleri yukleniyor", True, "Yuklendi")
+    display_status(stdscr, "BAGIMLILIK YUKLEME", "nodejs ve python modulleri yukleniyor", True, "HAZIR!")
     return True
 
 # Install Tiny Core package
@@ -150,13 +154,13 @@ def verify_edex_ui(stdscr):
             log_message("EDEX-UI klonlandi")
         except Exception as e:
             log_message(f"EDEX-UI klonlama basarisiz: {e}")
-            display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui indiriliyor", False, "Hata")
+            display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui indiriliyor", False, "HATA!")
             return False
 
     package_json_path = os.path.join(EDEX_DIR, "package.json")
     if not os.path.exists(package_json_path):
         log_message("package.json bulunamadi")
-        display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui dosyalari dogrulaniyor", False, "Hata")
+        display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui dosyalari dogrulaniyor", False, "HATA!")
         return False
 
     try:
@@ -164,7 +168,7 @@ def verify_edex_ui(stdscr):
         log_message("npm bagimliliklari yuklendi")
     except Exception as e:
         log_message(f"npm bagimliliklari yuklenemedi: {e}")
-        display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui kuruluyor", False, "Hata")
+        display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui kuruluyor", False, "HATA!")
         return False
 
     settings_path = os.path.join(EDEX_DIR, "settings.json")
@@ -206,7 +210,7 @@ def verify_edex_ui(stdscr):
     except Exception as e:
         log_message(f"Xorg optimizasyonu basarisiz: {e}")
 
-    display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui kuruluyor", True, "Yuklendi")
+    display_status(stdscr, "EDEX-UI YUKLEME", "edex-ui kuruluyor", True, "HAZIR!")
     return True
 
 # Start EDEX-UI
@@ -219,7 +223,7 @@ def start_edex_ui(stdscr):
             time.sleep(5)
             if process.poll() is None:
                 log_message("EDEX-UI baslatildi")
-                display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui calistiriliyor", True, "Yuklendi")
+                display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui calistiriliyor", True, "HAZIR!")
                 return True
             else:
                 stdout, stderr = process.communicate()
@@ -228,7 +232,7 @@ def start_edex_ui(stdscr):
             log_message(f"EDEX-UI baslatilamadi (deneme {attempt + 1}/{max_attempts}): {e}")
         time.sleep(3)
     log_message("EDEX-UI baslatma basarisiz")
-    display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui calistiriliyor", False, "Hata")
+    display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui calistiriliyor", False, "HATA!")
     return False
 
 # Verify backup
@@ -249,14 +253,14 @@ def verify_backup(stdscr):
             subprocess.run(["sudo", "chmod", "644", os.path.join(BACKUP_DIR, "backup_log.txt")], check=True)
         else:
             log_message("Yedek dogrulama basarisiz")
-            display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", False, "Hata")
+            display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", False, "HATA!")
             return False
         subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
-        display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", True, "Yuklendi")
+        display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", True, "HAZIR!")
         return True
     except Exception as e:
         log_message(f"Yedekleme basarisiz: {e}")
-        display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", False, "Hata")
+        display_status(stdscr, "YEDEKLEME", "sistem yedekleniyor", False, "HATA!")
         return False
 
 # Configure bootlocal.sh
@@ -286,11 +290,11 @@ def configure_bootlocal(stdscr):
         else:
             log_message("bootlocal.sh dogrulama basarisiz")
         subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
-        display_status(stdscr, "ONYUKLEME YAPILANDIRMA", "sistem onyuklemesi ayarlanıyor", True, "Yuklendi")
+        display_status(stdscr, "ONYUKLEME YAPILANDIRMA", "sistem onyuklemesi ayarlanıyor", True, "HAZIR!")
         return True
     except Exception as e:
         log_message(f"bootlocal.sh yapilandirmasi basarisiz: {e}")
-        display_status(stdscr, "ONYUKLEME YAPILANDIRMA", "sistem onyuklemesi ayarlanıyor", False, "Hata")
+        display_status(stdscr, "ONYUKLEME YAPILANDIRMA", "sistem onyuklemesi ayarlanıyor", False, "HATA!")
         return False
 
 # Configuration file handling
@@ -331,7 +335,7 @@ def display_status(stdscr, stage, description, success, status_text):
         )
         lines = compact_ascii.splitlines()
         max_line_len = max(len(line.rstrip()) for line in lines)
-        start_row = max(0, (rows - len(lines) - 5) // 2)
+        start_row = max(0, (rows - len(lines) - 6) // 2)
         start_col = max(0, (cols - max_line_len) // 2)
         
         curses.start_color()
@@ -343,11 +347,11 @@ def display_status(stdscr, stage, description, success, status_text):
         title = "YUKLEME ARACI"
         title_col = max(0, (cols - len(title)) // 2)
         stdscr.attron(curses.color_pair(1))
-        stdscr.addstr(start_row, title_col, title)
+        stdscr.addstr(start_row, title_col, title, curses.A_BOLD)
         stdscr.attroff(curses.color_pair(1))
 
         # ASCII
-        if rows >= len(lines) + 5 and cols >= max_line_len:
+        if rows >= len(lines) + 6 and cols >= max_line_len:
             for i, line in enumerate(lines):
                 stdscr.addstr(start_row + i + 2, start_col, line.rstrip())
         else:
@@ -356,7 +360,7 @@ def display_status(stdscr, stage, description, success, status_text):
 
         # Aşama başlığı
         stage_col = max(0, (cols - len(stage)) // 2)
-        stdscr.addstr(start_row + len(lines) + 3, stage_col, stage)
+        stdscr.addstr(start_row + len(lines) + 3, stage_col, stage, curses.A_BOLD)
 
         # Açıklama ve animasyon
         desc = f"{description} [/]"
@@ -372,14 +376,13 @@ def display_status(stdscr, stage, description, success, status_text):
 
         # Durum
         status_col = max(0, (cols - len(status_text)) // 2)
-        stdscr.addstr(start_row + len(lines) + 4, status_col, status_text)
         if success:
             stdscr.attron(curses.color_pair(2))
-            stdscr.addstr(start_row + len(lines) + 4, status_col, status_text)
+            stdscr.addstr(start_row + len(lines) + 5, status_col, status_text, curses.A_BOLD)
             stdscr.attroff(curses.color_pair(2))
         else:
             stdscr.attron(curses.color_pair(3))
-            stdscr.addstr(start_row + len(lines) + 4, status_col, status_text)
+            stdscr.addstr(start_row + len(lines) + 5, status_col, status_text, curses.A_BOLD)
             stdscr.attroff(curses.color_pair(3))
         stdscr.refresh()
         if success:
@@ -393,13 +396,13 @@ def display_status(stdscr, stage, description, success, status_text):
 def main(stdscr):
     try:
         curses.curs_set(0)
-        display_status(stdscr, "BASLATMA", "sistem baslatiliyor", True, "Yuklendi")
+        display_status(stdscr, "BASLATMA", "sistem baslatiliyor", True, "HAZIR!")
     except Exception as e:
         log_message(f"Curses baslatilamadi: {e}")
 
     config = load_config()
     if config.get("default_edex", False):
-        display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui varsayilan olarak calistiriliyor", True, "Yuklendi")
+        display_status(stdscr, "EDEX-UI BASLATMA", "edex-ui varsayilan olarak calistiriliyor", True, "HAZIR!")
         if verify_edex_ui(stdscr):
             start_edex_ui(stdscr)
         return
@@ -407,7 +410,7 @@ def main(stdscr):
     if not verify_disk(stdscr):
         return
 
-    display_status(stdscr, "PAKET YUKLEME", "gerekli paketler yukleniyor", True, "Yuklendi")
+    display_status(stdscr, "PAKET YUKLEME", "gerekli paketler yukleniyor", True, "HAZIR!")
     for package in REQUIRED_TCE_PACKAGES:
         install_tce_package(package)
 
@@ -417,8 +420,7 @@ def main(stdscr):
     if not verify_edex_ui(stdscr):
         return
 
-    if not configure_bootlocal(stdscr):
-        pass  # Kritik değil, devam et
+    configure_bootlocal(stdscr)  # Kritik değil, hata olsa da devam
 
     verify_backup(stdscr)  # Kritik değil, hata olsa da devam
 
@@ -429,11 +431,12 @@ def main(stdscr):
         choice = stdscr.getch()
         config["default_edex"] = choice == ord("e")
         save_config(config)
+        display_status(stdscr, "KONFIGURASYON KAYDETME", "ayarlar kaydediliyor", True, "HAZIR!")
     except Exception as e:
         log_message(f"Varsayilan secim alinamadi: {e}")
+        display_status(stdscr, "KONFIGURASYON KAYDETME", "ayarlar kaydediliyor", False, "HATA!")
 
-    if not start_edex_ui(stdscr):
-        return
+    start_edex_ui(stdscr)
 
 if __name__ == "__main__":
     try:
