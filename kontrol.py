@@ -15,7 +15,11 @@ from pathlib import Path
 import socket
 import urllib.request
 import urllib.error
-import psutil
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 # Configuration
 SYSTEM_NAME = "BERKE OS"
@@ -58,8 +62,11 @@ def setup_logger() -> Optional[logging.Logger]:
         fix_permissions(LOG_DIR, logger=None)
         # Clean old logs
         for log in LOG_DIR.glob("install.log.*"):
-            if log.stat().st_mtime < time.time() - MAX_LOG_AGE_DAYS * 86400:
-                log.unlink(missing_ok=True)
+            try:
+                if log.stat().st_mtime < time.time() - MAX_LOG_AGE_DAYS * 86400:
+                    log.unlink(missing_ok=True)
+            except Exception:
+                pass
         logger = logging.getLogger('BerkeOS')
         logger.setLevel(logging.DEBUG)
         handler = logging.handlers.RotatingFileHandler(str(LOG_FILE), maxBytes=1048576, backupCount=3)
@@ -70,8 +77,11 @@ def setup_logger() -> Optional[logging.Logger]:
         logger.info("Logger initialized")
         return logger
     except Exception as e:
-        with open("/tmp/install_fallback.log", "a") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Logger setup failed: {e}\n")
+        try:
+            with open("/tmp/install_fallback.log", "a") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: Logger setup failed: {e}\n")
+        except Exception:
+            pass
         return None
 
 # Clean temporary files
@@ -82,13 +92,16 @@ def clean_temp(logger: Optional[logging.Logger] = None) -> None:
             cutoff = time.time() - 86400  # 24 hours
             for item in temp_dir.iterdir():
                 try:
-                    if item.stat().st_mtime < cutoff:
+                    st = item.stat()
+                    if st.st_mtime < cutoff:
                         if item.is_file():
-                            item.unlink()
+                            item.unlink(missing_ok=True)
                         elif item.is_dir():
                             shutil.rmtree(item, ignore_errors=True)
-                except Exception:
-                    pass
+                except (PermissionError, FileNotFoundError):
+                    log_message(f"Failed to clean {item}: Access denied or file not found", logger, "warning")
+                except Exception as e:
+                    log_message(f"Failed to clean {item}: {e}", logger, "warning")
         logger.info("Temporary files cleaned") if logger else None
     except Exception as e:
         log_message(f"Temporary files cleanup failed: {e}", logger, "error")
@@ -99,8 +112,10 @@ def log_message(message: str, logger: Optional[logging.Logger] = None, level: st
         if logger:
             getattr(logger, level)(message)
         else:
-            with open("/tmp/install_fallback.log", "a") as f:
-                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{level.upper()}]: {message}\n")
+            fallback_log = Path("/tmp/install_fallback.log")
+            if fallback_log.parent.exists() and os.access(fallback_log.parent, os.W_OK):
+                with open(fallback_log, "a") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{level.upper()}]: {message}\n")
     except Exception:
         pass
 
@@ -115,21 +130,28 @@ def display_error(stdscr, stage: str, error_msg: str, logger: Optional[logging.L
     try:
         stdscr.clear()
         rows, cols = stdscr.getmaxyx()
+        specific_suggestions = {
+            "DEPENDENCIES": "Check internet connection and ensure tce-load is installed.",
+            "DISK SETUP": "Verify disk is connected, formatted (ext4/vfat), and has at least 2 GB free.",
+            "eDEX-UI DOWNLOAD": "Ensure GitHub is accessible and git is installed.",
+            "eDEX-UI INSTALL": "Verify Node.js and npm are installed correctly.",
+            "eDEX-UI START": "Check Xorg installation and display settings."
+        }
+        suggestion = suggestion or specific_suggestions.get(stage, "Check logs for details.")
         lines = [
             ("BERKE OS - ERROR!", curses.A_BOLD | curses.color_pair(1), 2),
             (f"Stage: {stage}", curses.color_pair(4), 4),
             (f"Error: {error_msg}", curses.color_pair(4), 6),
             (f"Logs: {LOG_FILE}", curses.color_pair(4), 8),
-            (f"Suggestion: {suggestion}", curses.color_pair(4), 10) if suggestion else None,
-            ("View logs: cat /var/log/berke/install.log", curses.color_pair(4), 12 if suggestion else 10),
-            ("Report: github.com/BreDEVs/kontrol/issues", curses.color_pair(4), 14 if suggestion else 12),
-            ("Press any key to exit", curses.color_pair(4), 16 if suggestion else 14)
+            (f"Suggestion: {suggestion}", curses.color_pair(4), 10),
+            ("View logs: cat /var/log/berke/install.log", curses.color_pair(4), 12),
+            ("Report: github.com/BreDEVs/kontrol/issues", curses.color_pair(4), 14),
+            ("Press any key to exit", curses.color_pair(4), 16)
         ]
         for line in lines:
-            if line:
-                text, attr, row = line
-                formatted_text, x = center_text(text, cols)
-                stdscr.addstr(row, x, formatted_text, attr)
+            text, attr, row = line
+            formatted_text, x = center_text(text, cols)
+            stdscr.addstr(row, x, formatted_text, attr)
         stdscr.refresh()
         stdscr.getch()
     except Exception as e:
@@ -149,7 +171,7 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
             if row >= rows - 2:
                 break
             progress = "█" * int((i + 1 if status == "DONE" else i) * 10 / total_stages) + " " * (10 - int((i + 1 if status == "DONE" else i) * 10 / total_stages))
-            stage_text = f"{i+1}. {stage_name[:16]}: [{ANIM_CHARS[int(time.time() * 4) % 4] if i == current_stage and status == '/' else 'DONE' if status == 'DONE' else '-'}] {progress} {int((i + 1 if status == "DONE" else i) * 100 / total_stages)}%"
+            stage_text = f"{i+1}. {stage_name[:16]}: [{ANIM_CHARS[int(time.time() * 4) % 4] if i == current_stage and status == '/' else 'DONE' if status == 'DONE' else '-'}] {progress} {int((i + 1 if status == 'DONE' else i) * 100 / total_stages)}%"
             text, x = center_text(stage_text, cols)
             attr = curses.color_pair(2) | curses.A_BOLD if i == current_stage and status == "/" else curses.color_pair(3) if status == "DONE" else curses.color_pair(4)
             stdscr.addstr(row, x, text, attr)
@@ -173,7 +195,10 @@ def fix_permissions(path: Path, logger: Optional[logging.Logger] = None) -> None
             if path.exists():
                 if not os.access(path, os.W_OK):
                     subprocess.run(["chmod", "-R", "u+w", str(path)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["chown", "-R", f"{USER}:{GROUP}", str(path)], check=True, timeout=TIMEOUT_SECONDS)
+                    try:
+                        subprocess.run(["chown", "-R", f"{USER}:{GROUP}", str(path)], check=True, timeout=TIMEOUT_SECONDS)
+                    except subprocess.CalledProcessError:
+                        log_message(f"chown failed for {path}: Root access may be required", logger, "warning")
                 if path.is_dir():
                     subprocess.run(["chmod", "775", str(path)], check=True, timeout=TIMEOUT_SECONDS)
                 elif os.stat(path).st_mode & stat.S_IXUSR:
@@ -194,12 +219,28 @@ def fix_permissions(path: Path, logger: Optional[logging.Logger] = None) -> None
 # Check system resources
 def check_resources(logger: Optional[logging.Logger]) -> None:
     try:
-        cpu_usage = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory()
-        if cpu_usage > 90:
-            log_message(f"High CPU usage: {cpu_usage}%", logger, "warning")
-        if memory.available < 512 * 1024 * 1024:  # 512 MB
-            log_message(f"Low memory: {memory.available / 1024 / 1024:.2f} MB available", logger, "warning")
+        if PSUTIL_AVAILABLE:
+            cpu_usage = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory()
+            if cpu_usage > 90:
+                log_message(f"High CPU usage: {cpu_usage}%", logger, "warning")
+            if memory.available < 512 * 1024 * 1024:  # 512 MB
+                log_message(f"Low memory: {memory.available / 1024 / 1024:.2f} MB available", logger, "warning")
+        else:
+            try:
+                with open("/proc/loadavg", "r") as f:
+                    load = float(f.read().split()[0])
+                    if load > 4.0:
+                        log_message(f"High system load: {load}", logger, "warning")
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        if "MemAvailable" in line:
+                            mem_kb = int(line.split()[1])
+                            if mem_kb < 512 * 1024:
+                                log_message(f"Low memory: {mem_kb / 1024:.2f} MB available", logger, "warning")
+                            break
+            except Exception:
+                log_message("Basic resource check failed", logger, "warning")
     except Exception as e:
         log_message(f"Resource check failed: {e}", logger, "warning")
 
@@ -241,6 +282,7 @@ def detect_disk(logger: Optional[logging.Logger]) -> Tuple[Path, str]:
 def check_internet(stdscr, logger: Optional[logging.Logger]) -> bool:
     dns_servers = [("8.8.8.8", 53), ("1.1.1.1", 53), ("9.9.9.9", 53)]
     http_test = "https://www.google.com"
+    ping_cmd = shutil.which("ping")
     for server, port in dns_servers:
         try:
             socket.create_connection((server, port), timeout=5)
@@ -248,9 +290,16 @@ def check_internet(stdscr, logger: Optional[logging.Logger]) -> bool:
                 urllib.request.urlopen(http_test, timeout=5)
                 log_message(f"Internet connection established via {server} and HTTP", logger)
                 return True
-            except urllib.error.URLError:
-                log_message("HTTP test failed, but DNS resolved", logger, "warning")
-                return True
+            except urllib.error.URLError as e:
+                log_message(f"HTTP test failed: {e}", logger, "warning")
+                if ping_cmd:
+                    try:
+                        subprocess.run([ping_cmd, "-c", "1", server], check=True, timeout=5)
+                        log_message(f"Ping test succeeded for {server}", logger)
+                        return True
+                    except Exception:
+                        pass
+                return False
         except Exception:
             continue
     log_message("Internet connection failed", logger, "error")
@@ -263,22 +312,24 @@ def check_internet(stdscr, logger: Optional[logging.Logger]) -> bool:
             msg, msg_x = center_text("No internet connection. Trying Wi-Fi...", cols)
             stdscr.addstr(4, msg_x, msg, curses.color_pair(4))
             stdscr.refresh()
-            try:
-                result = subprocess.run(["nmcli", "--version"], capture_output=True, text=True, check=True, timeout=5)
-                log_message(f"nmcli found: {result.stdout.strip()}", logger)
-                subprocess.run(["nmcli", "device", "wifi", "list"], check=True, timeout=10)
-                subprocess.run(["nmcli", "device", "wifi", "connect"], check=False, timeout=30)
-                time.sleep(5)
-                for server, port in dns_servers:
-                    try:
-                        socket.create_connection((server, port), timeout=5)
-                        urllib.request.urlopen(http_test, timeout=5)
-                        log_message("Wi-Fi connection established", logger)
-                        return True
-                    except Exception:
-                        continue
-            except Exception as e:
-                log_message(f"Wi-Fi connection attempt failed: {e}", logger, "warning")
+            nmcli_cmd = shutil.which("nmcli")
+            if nmcli_cmd:
+                try:
+                    result = subprocess.run([nmcli_cmd, "--version"], capture_output=True, text=True, check=True, timeout=5)
+                    log_message(f"nmcli found: {result.stdout.strip()}", logger)
+                    subprocess.run([nmcli_cmd, "device", "wifi", "list"], check=True, timeout=10)
+                    subprocess.run([nmcli_cmd, "device", "wifi", "connect"], check=False, timeout=30)
+                    time.sleep(5)
+                    for server, port in dns_servers:
+                        try:
+                            socket.create_connection((server, port), timeout=5)
+                            urllib.request.urlopen(http_test, timeout=5)
+                            log_message("Wi-Fi connection established", logger)
+                            return True
+                        except Exception:
+                            continue
+                except Exception as e:
+                    log_message(f"Wi-Fi connection attempt failed: {e}", logger, "warning")
             suggestion = "Check network connection, try wired connection, or run 'nmcli' manually."
             display_error(stdscr, "Network Check", "Internet connection failed", logger, suggestion)
         except Exception as e:
@@ -314,6 +365,11 @@ def update_script(stdscr, logger: Optional[logging.Logger]) -> None:
                     content = f.read()
                     if not ("#!/usr/bin/env python" in content or "import " in content):
                         raise Exception("Downloaded file is not a valid Python script")
+                # Optional: Add hash verification if provided
+                # expected_hash = "YOUR_HASH_HERE"
+                # with open(temp_script, "rb") as f:
+                #     if hashlib.sha256(f.read()).hexdigest() != expected_hash:
+                #         raise Exception("Script hash verification failed")
                 if not temp_script.exists():
                     raise Exception("Script download failed")
                 break
@@ -355,7 +411,7 @@ def update_script(stdscr, logger: Optional[logging.Logger]) -> None:
         sys.exit(0)
     except Exception as e:
         log_message(f"Script update failed: {e}", logger, "error")
-        display_error(stdscr, "SCRIPT UPDATE", str(e), logger, "Ensure GitHub URL is accessible and try again.")
+        display_error(stdscr, "SCRIPT UPDATE", str(e), logger)
     finally:
         clean_temp(logger)
 
@@ -375,12 +431,14 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
             update_display(stdscr, stages, current_stage, sub_status, logger)
             for attempt in range(RETRY_ATTEMPTS):
                 try:
-                    result = subprocess.run(["which", cmd], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                    cmd_path = shutil.which(cmd)
+                    if not cmd_path:
+                        raise Exception(f"{cmd} not found in PATH")
                     if cmd == "python3.9":
-                        result = subprocess.run([cmd, "--version"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                        result = subprocess.run([cmd_path, "--version"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                         if "3.9" not in result.stdout:
                             raise Exception("Python 3.9 version mismatch")
-                    log_message(f"{cmd} found: {result.stdout.strip()}", logger)
+                    log_message(f"{cmd} found: {cmd_path}", logger)
                     break
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
@@ -402,12 +460,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         break
                     sub_status = f"Installing {pkg}"
                     update_display(stdscr, stages, current_stage, sub_status, logger)
-                    try:
-                        result = subprocess.run(["tce-load", "-w", "-i", "-f", pkg], capture_output=True, text=True, check=True, timeout=600)
-                        log_message(f"{pkg} installed: {result.stdout.strip()}", logger)
-                    except subprocess.CalledProcessError as e:
-                        log_message(f"tce-load failed for {pkg}: {e.stderr}", logger, "error")
-                        raise Exception(f"{pkg} installation failed: {e.stderr}")
+                    result = subprocess.run(["tce-load", "-w", "-i", "-f", pkg], capture_output=True, text=True, check=True, timeout=600)
+                    log_message(f"{pkg} installed: {result.stdout.strip()}", logger)
                     if pkg == "Xorg-7.7":
                         try:
                             x11_dir = Path("/usr/local/lib/X11")
@@ -471,8 +525,12 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         update_display(stdscr, stages, current_stage, sub_status, logger)
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
-                npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                node_cmd = shutil.which("node")
+                npm_cmd = shutil.which("npm")
+                if not node_cmd or not npm_cmd:
+                    raise Exception("Node.js or npm not found")
+                result = subprocess.run([node_cmd, "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                npm_result = subprocess.run([npm_cmd, "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if f"v{NODE_VERSION}" not in result.stdout:
                     raise Exception(f"Node.js version mismatch: expected {NODE_VERSION}, found {result.stdout.strip()}")
                 log_message(f"Node.js {result.stdout.strip()} and npm {npm_result.stdout.strip()} found", logger)
@@ -486,14 +544,15 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     target_dir = Path("/usr/local/node")
                     fix_permissions(node_extract_dir.parent, logger)
                     if node_tar.exists():
-                        node_tar.unlink()
+                        node_tar.unlink(missing_ok=True)
                     if node_extract_dir.exists():
                         shutil.rmtree(node_extract_dir, ignore_errors=True)
                     if target_dir.exists():
                         shutil.rmtree(target_dir, ignore_errors=True)
                     for url in NODE_MIRRORS:
                         try:
-                            subprocess.run(["wget", "-O", str(node_tar), url], check=True, timeout=300)
+                            wget_cmd = shutil.which("wget")
+                            subprocess.run([wget_cmd, "-O", str(node_tar), url], check=True, timeout=300)
                             with open(node_tar, "rb") as f:
                                 checksum = hashlib.sha256(f.read()).hexdigest()
                             if checksum != NODE_CHECKSUM:
@@ -505,18 +564,19 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         raise Exception("All Node.js mirrors failed")
                     node_extract_dir.mkdir(parents=True, exist_ok=True)
                     fix_permissions(node_extract_dir, logger)
-                    subprocess.run(["tar", "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300)
+                    tar_cmd = shutil.which("tar")
+                    subprocess.run([tar_cmd, "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300)
                     extracted_dir = next(node_extract_dir.iterdir())
                     subprocess.run(["mv", str(extracted_dir), str(target_dir)], check=True, timeout=10)
                     for binary in ["node", "npm"]:
                         binary_path = target_dir / "bin" / binary
                         link_path = Path(f"/usr/local/bin/{binary}")
                         if link_path.exists():
-                            link_path.unlink()
+                            link_path.unlink(missing_ok=True)
                         subprocess.run(["ln", "-s", str(binary_path), str(link_path)], check=True, timeout=TIMEOUT_SECONDS)
                     fix_permissions(target_dir, logger)
-                    result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
-                    npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                    result = subprocess.run([shutil.which("node"), "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                    npm_result = subprocess.run([shutil.which("npm"), "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                     if f"v{NODE_VERSION}" not in result.stdout:
                         raise Exception(f"Node.js version verification failed: {result.stdout.strip()}")
                     log_message(f"Node.js {result.stdout.strip()} and npm {npm_result.stdout.strip()} installed", logger)
@@ -527,7 +587,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     time.sleep(2)
                 finally:
                     if node_tar.exists():
-                        node_tar.unlink()
+                        node_tar.unlink(missing_ok=True)
                     if node_extract_dir.exists():
                         shutil.rmtree(node_extract_dir, ignore_errors=True)
 
@@ -535,7 +595,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         update_display(stdscr, stages, current_stage, sub_status, logger)
     except Exception as e:
         log_message(f"Dependency stage failed: {e}", logger, "error")
-        display_error(stdscr, stages[current_stage][0], str(e), logger, "Check network and required commands.")
+        display_error(stdscr, stages[current_stage][0], str(e), logger)
     finally:
         clean_temp(logger)
 
@@ -560,7 +620,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
                 with open(test_file, "wb") as f:
                     f.write(os.urandom(10 * 1024 * 1024))  # 10 MB
                 elapsed = time.time() - start_time
-                test_file.unlink()
+                test_file.unlink(missing_ok=True)
                 if elapsed > 5:
                     log_message(f"Slow disk write speed: {10 / elapsed:.2f} MB/s", logger, "warning")
                 log_message(f"Disk space: {free_space_gb:.2f} GB free", logger)
@@ -587,13 +647,16 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
         update_display(stdscr, stages, current_stage, sub_status, logger)
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                result = subprocess.run(["mountpoint", "-q", str(BASE_DIR)], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
+                mountpoint_cmd = shutil.which("mountpoint")
+                result = subprocess.run([mountpoint_cmd, "-q", str(BASE_DIR)], check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
                     subprocess.run(["mkdir", "-p", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
                     fix_permissions(BASE_DIR, logger)
-                    subprocess.run(["mount", disk_device, str(BASE_DIR)], check=True, timeout=10)
-                    subprocess.run(["mount", "-o", "remount,rw", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
-                result = subprocess.run(["df", "-h", str(BASE_DIR)], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                    mount_cmd = shutil.which("mount")
+                    subprocess.run([mount_cmd, disk_device, str(BASE_DIR)], check=True, timeout=10)
+                    subprocess.run([mount_cmd, "-o", "remount,rw", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+                df_cmd = shutil.which("df")
+                result = subprocess.run([df_cmd, "-h", str(BASE_DIR)], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if str(BASE_DIR) not in result.stdout:
                     raise Exception("Disk mount verification failed")
                 break
@@ -619,7 +682,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
         update_display(stdscr, stages, current_stage, sub_status, logger)
     except Exception as e:
         log_message(f"Disk stage failed: {e}", logger, "error")
-        display_error(stdscr, stages[current_stage][0], str(e), logger, "Ensure disk is connected, formatted, and has enough space.")
+        display_error(stdscr, stages[current_stage][0], str(e), logger)
     finally:
         clean_temp(logger)
 
@@ -645,7 +708,8 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
                 if EDEX_DIR.exists():
                     shutil.rmtree(EDEX_DIR, ignore_errors=True)
                 fix_permissions(EDEX_DIR.parent, logger)
-                subprocess.run(["git", "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600)
+                git_cmd = shutil.which("git")
+                subprocess.run([git_cmd, "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600)
                 fix_permissions(EDEX_DIR, logger)
                 if not (EDEX_DIR / "package.json").exists():
                     raise Exception("eDEX-UI package.json not found")
@@ -660,7 +724,7 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
         update_display(stdscr, stages, current_stage, sub_status, logger)
     except Exception as e:
         log_message(f"eDEX-UI download stage failed: {e}", logger, "error")
-        display_error(stdscr, stages[current_stage][0], str(e), logger, "Check network and GitHub access.")
+        display_error(stdscr, stages[current_stage][0], str(e), logger)
     finally:
         clean_temp(logger)
 
@@ -675,9 +739,10 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         update_display(stdscr, stages, current_stage, sub_status, logger)
         for attempt in range(RETRY_ATTEMPTS):
             try:
+                npm_cmd = shutil.which("npm")
                 env = os.environ.copy()
                 env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
-                subprocess.run(["npm", "cache", "clean", "--force"], check=True, timeout=60, env=env)
+                subprocess.run([npm_cmd, "cache", "clean", "--force"], check=True, timeout=60, env=env)
                 log_message("npm cache cleaned", logger)
                 break
             except Exception as e:
@@ -696,7 +761,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
                 env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
                 env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
                 subprocess.run(
-                    ["npm", "install", "--no-audit", "--no-fund", "--legacy-peer-deps"],
+                    [npm_cmd, "install", "--no-audit", "--no-fund", "--legacy-peer-deps"],
                     cwd=str(EDEX_DIR), check=True, timeout=600, env=env
                 )
                 fix_permissions(EDEX_DIR / "node_modules", logger)
@@ -772,8 +837,50 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         update_display(stdscr, stages, current_stage, sub_status, logger)
     except Exception as e:
         log_message(f"eDEX-UI installation stage failed: {e}", logger, "error")
-        display_error(stdscr, stages[current_stage][0], str(e), logger, "Check Node.js and npm installation.")
+        display_error(stdscr, stages[current_stage][0], str(e), logger)
     finally:
+        clean_temp(logger)
+
+# Post-installation test for eDEX-UI
+def post_install_test(logger: Optional[logging.Logger]) -> bool:
+    log_message("Running post-installation test for eDEX-UI", logger)
+    process = None
+    try:
+        os.environ["DISPLAY"] = ":0"
+        env = os.environ.copy()
+        env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
+        env["LD_LIBRARY_PATH"] = f"/usr/local/lib:/usr/lib:{env.get('LD_LIBRARY_PATH', '')}"
+        env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
+        process = subprocess.Popen(
+            [shutil.which("npm"), "start"],
+            cwd=str(EDEX_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            preexec_fn=os.setsid,
+            env=env
+        )
+        time.sleep(5)
+        if process.poll() is None:
+            log_message("eDEX-UI test run successful", logger)
+            return True
+        else:
+            stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
+            log_message(f"eDEX-UI test run failed: {stderr}", logger, "error")
+            return False
+    except Exception as e:
+        log_message(f"Post-installation test failed: {e}", logger, "error")
+        return False
+    finally:
+        if process and process.poll() is None:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.wait(timeout=TIMEOUT_SECONDS)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except Exception:
+                    pass
         clean_temp(logger)
 
 # Start eDEX-UI
@@ -793,8 +900,9 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception:
                 pass
         try:
-            subprocess.run(["killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
-            subprocess.run(["killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
+            killall_cmd = shutil.which("killall")
+            subprocess.run([killall_cmd, "-q", "node"], timeout=TIMEOUT_SECONDS)
+            subprocess.run([killall_cmd, "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
         except Exception:
             pass
         clean_temp(logger)
@@ -807,7 +915,8 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
         for attempt in range(RETRY_ATTEMPTS):
             try:
                 os.environ["DISPLAY"] = ":0"
-                result = subprocess.run(["pgrep", "-x", "Xorg"], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
+                pgrep_cmd = shutil.which("pgrep")
+                result = subprocess.run([pgrep_cmd, "-x", "Xorg"], check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
                     xorg_process = subprocess.Popen(
                         ["Xorg", ":0", "-quiet", "-nolisten", "tcp"],
@@ -818,11 +927,14 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                     for _ in range(10):
                         time.sleep(1)
                         try:
-                            subprocess.run(["xdpyinfo"], capture_output=True, check=True, timeout=2)
-                            break
-                        except Exception:
-                            if Path("/tmp/.X0-lock").exists():
+                            xset_cmd = shutil.which("xset")
+                            if xset_cmd:
+                                subprocess.run([xset_cmd, "-q"], check=True, timeout=2)
                                 break
+                            elif Path("/tmp/.X0-lock").exists():
+                                break
+                        except Exception:
+                            pass
                     else:
                         xorg_process.terminate()
                         raise Exception("Xorg failed to start or screen not ready")
@@ -843,8 +955,9 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
                 env["LD_LIBRARY_PATH"] = f"/usr/local/lib:/usr/lib:{env.get('LD_LIBRARY_PATH', '')}"
                 env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
+                npm_cmd = shutil.which("npm")
                 process = subprocess.Popen(
-                    ["npm", "start"],
+                    [npm_cmd, "start"],
                     cwd=str(EDEX_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -856,7 +969,8 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 if process.poll() is not None:
                     stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
                     raise Exception(f"eDEX-UI startup failed: {stderr}")
-                result = subprocess.run(["ps", "aux"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                ps_cmd = shutil.which("ps")
+                result = subprocess.run([ps_cmd, "aux"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if "node" not in result.stdout or "edex-ui" not in result.stdout:
                     raise Exception("eDEX-UI process verification failed")
                 log_message("eDEX-UI started", logger)
@@ -878,7 +992,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
     except Exception as e:
         log_message(f"eDEX-UI startup stage failed: {e}", logger, "error")
         if stdscr:
-            display_error(stdscr, stages[current_stage][0], str(e), logger, "Check Xorg and eDEX-UI installation.")
+            display_error(stdscr, stages[current_stage][0], str(e), logger)
         return False
     finally:
         if not process or process.poll() is not None:
@@ -893,21 +1007,17 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
         if not (EDEX_DIR / "node_modules").exists():
             log_message("eDEX-UI node_modules missing", logger, "warning")
             return False
-        result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+        node_cmd = shutil.which("node")
+        npm_cmd = shutil.which("npm")
+        result = subprocess.run([node_cmd, "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
         if f"v{NODE_VERSION}" not in result.stdout:
             log_message(f"Node.js version mismatch: {result.stdout.strip()}", logger, "warning")
             return False
-        result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+        result = subprocess.run([npm_cmd, "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
         main_js = EDEX_DIR / "main.js"
-        if main_js.exists():
-            try:
-                env = os.environ.copy()
-                env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
-                env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
-                subprocess.run(["node", str(main_js), "--version"], capture_output=True, check=True, timeout=10, env=env)
-                log_message("eDEX-UI main.js check passed", logger)
-            except Exception as e:
-                log_message(f"eDEX-UI main.js check failed: {e}", logger, "warning")
+        if not main_js.exists():
+            log_message("eDEX-UI main.js missing", logger, "warning")
+            return False
         result = subprocess.run(["tce-status", "-i"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
         for pkg in REQUIRED_TCE_PACKAGES:
             if pkg not in result.stdout:
@@ -968,11 +1078,12 @@ def main(stdscr=None):
         errors.append(f"Disk initialization: {e}")
         log_message(f"Disk initialization failed: {e}", logger, "error")
         if stdscr:
-            display_error(stdscr, "Initialization", str(e), logger, "Check disk connection and format.")
+            display_error(stdscr, "Initialization", str(e), logger)
 
     if stdscr:
         try:
-            subprocess.run(["resize"], capture_output=True, timeout=TIMEOUT_SECONDS)
+            resize_cmd = shutil.which("resize")
+            subprocess.run([resize_cmd], timeout=TIMEOUT_SECONDS)
             curses.curs_set(0)
             stdscr.timeout(100)
             rows, cols = stdscr.getmaxyx()
@@ -990,7 +1101,7 @@ def main(stdscr=None):
         except Exception as e:
             errors.append(f"Curses initialization: {e}")
             log_message(f"Curses initialization failed: {e}", logger, "error")
-            display_error(stdscr, "Initialization", str(e), logger, "Increase terminal size and retry.")
+            display_error(stdscr, "Initialization", str(e), logger)
 
     # Quick check and start eDEX-UI if possible
     if quick_check_edex_ui(logger):
@@ -1024,11 +1135,13 @@ def main(stdscr=None):
                 stages[i + 1] = (stages[i + 1][0], "/")
             if stdscr:
                 update_display(stdscr, stages, i, "Stage completed", logger)
+            if stages[i][0] == "eDEX-UI INSTALL" and not post_install_test(logger):
+                errors.append("eDEX-UI post-installation test failed")
         except Exception as e:
             errors.append(f"{stages[i][0]}: {e}")
             log_message(f"Stage failed: {stages[i][0]}: {e}", logger, "error")
             if stdscr:
-                display_error(stdscr, stages[i][0], str(e), logger, "Check logs for details.")
+                display_error(stdscr, stages[i][0], str(e), logger)
 
     generate_setup_report(start_time, errors, logger)
 
@@ -1046,7 +1159,10 @@ def main(stdscr=None):
             key = stdscr.getch()
             if key == ord('r'):
                 log_message("User initiated reboot", logger)
-                subprocess.run(["reboot"], timeout=10)
+                sync_cmd = shutil.which("sync")
+                subprocess.run([sync_cmd], timeout=5)
+                reboot_cmd = shutil.which("reboot")
+                subprocess.run([reboot_cmd], timeout=10)
         except Exception as e:
             log_message(f"Completion screen failed: {e}", logger, "error")
 
@@ -1055,8 +1171,9 @@ if __name__ == "__main__":
         logger = setup_logger()
         log_message(f"Signal received: {sig}", logger, "info")
         try:
-            subprocess.run(["killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
-            subprocess.run(["killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
+            killall_cmd = shutil.which("killall")
+            subprocess.run([killall_cmd, "-q", "node"], timeout=TIMEOUT_SECONDS)
+            subprocess.run([killall_cmd, "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
         except Exception:
             pass
         clean_temp(logger)
