@@ -26,18 +26,18 @@ NODE_VERSION = "16.20.2"
 NODE_URL = "https://nodejs.org/dist/v16.20.2/node-v16.20.2-linux-x64.tar.xz"
 EDEX_URL = "https://github.com/GitSquared/edex-ui.git"
 BOOT_SCRIPT = Path("/opt/bootlocal.sh")
-REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "libXext", "fontconfig", "git", "wget", "curl", "tar"]
-REQUIRED_COMMANDS = ["python3.9", "wget", "curl", "git", "tar"]
+REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libXScrnSaver", "libXext", "fontconfig", "git", "wget", "curl", "tar"]
+REQUIRED_COMMANDS = ["python3.9", "wget", "curl", "git", "tar", "tce-load", "tce-status", "filetool.sh"]
 MIN_TERM_SIZE = (20, 50)
 RETRY_ATTEMPTS = 3
-TIMEOUT_SECONDS = 5
+TIMEOUT_SECONDS = 10
 USER = "tc"
 GROUP = "staff"
 
 # Environment setup
 os.environ["PATH"] = f"{os.environ.get('PATH', '')}:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"
 os.environ["HOME"] = f"/home/{USER}"
-os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get('LD_LIBRARY_PATH', '')}:/usr/local/lib"
+os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get('LD_LIBRARY_PATH', '')}:/usr/local/lib:/usr/lib"
 
 # Logger setup
 def setup_logger() -> Optional[logging.Logger]:
@@ -101,58 +101,16 @@ def log_message(message: str, logger: Optional[logging.Logger] = None) -> None:
     except Exception:
         pass
 
-# Draw border
-def draw_border(stdscr, y: int, x: int, height: int, width: int) -> None:
-    try:
-        stdscr.addstr(y, x, "┌" + "─" * (width - 2) + "┐")
-        for i in range(1, height - 1):
-            stdscr.addstr(y + i, x, "│" + " " * (width - 2) + "│")
-        stdscr.addstr(y + height - 1, x, "└" + "─" * (width - 2) + "┘")
-    except Exception as e:
-        log_message(f"Border drawing failed: {e}")
-
 # Error display
 def display_error(stdscr, stage: str, error_msg: str, logger: Optional[logging.Logger]) -> None:
     try:
         stdscr.clear()
         rows, cols = stdscr.getmaxyx()
-        box_width = min(cols - 4, 60)
-        box_height = min(rows - 4, 15)
-        box_y = (rows - box_height) // 2
-        box_x = (cols - box_width) // 2
-
-        curses.start_color()
-        curses.init_pair(1, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-        draw_border(stdscr, box_y, box_x, box_height, box_width)
-
-        title = "B E R K E  O S"
-        title_x = box_x + (box_width - len(title)) // 2
-        stdscr.attron(curses.color_pair(1))
-        stdscr.addstr(box_y + 1, title_x, title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(1))
-
-        error_title = "ERROR OCCURRED!"
-        error_title_x = box_x + (box_width - len(error_title)) // 2
-        stdscr.attron(curses.color_pair(2))
-        stdscr.addstr(box_y + 3, error_title_x, error_title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(2))
-
-        stage_info = f"Stage: {stage}"
-        stage_x = box_x + (box_width - len(stage_info)) // 2
-        stdscr.addstr(box_y + 5, stage_x, stage_info)
-
-        error_info = f"Error: {error_msg[:box_width-4]}"
-        error_x = box_x + (box_width - len(error_info)) // 2
-        stdscr.addstr(box_y + 6, error_x, error_info)
-
-        solution = f"Check logs: {LOG_FILE}"
-        solution_x = box_x + (box_width - len(solution)) // 2
-        stdscr.addstr(box_y + 8, solution_x, solution)
-
-        exit_prompt = "Press any key to exit"
-        exit_x = box_x + (box_width - len(exit_prompt)) // 2
-        stdscr.addstr(box_y + box_height - 2, exit_x, exit_prompt)
+        stdscr.addstr(1, 2, "BERKE OS - ERROR OCCURRED!", curses.A_BOLD | curses.color_pair(1))
+        stdscr.addstr(3, 2, f"Stage: {stage}")
+        stdscr.addstr(4, 2, f"Error: {error_msg[:cols-4]}")
+        stdscr.addstr(6, 2, f"Check logs: {LOG_FILE}")
+        stdscr.addstr(8, 2, "Press any key to exit")
         stdscr.refresh()
         stdscr.getch()
     except Exception as e:
@@ -164,61 +122,23 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
     try:
         stdscr.clear()
         rows, cols = stdscr.getmaxyx()
-        box_width = min(cols - 4, 60)
-        box_height = min(rows - 4, 20)
-        box_y = (rows - box_height) // 2
-        box_x = (cols - box_width) // 2
-
-        curses.start_color()
-        curses.init_pair(1, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(4, curses.COLOR_CYAN, curses.COLOR_BLACK)
-        curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_BLACK)
-        draw_border(stdscr, box_y, box_x, box_height, box_width)
-
-        title = "B E R K E  O S"
-        title_x = box_x + (box_width - len(title)) // 2
-        stdscr.attron(curses.color_pair(1))
-        stdscr.addstr(box_y + 1, title_x, title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(1))
-
-        sys_title = "System initializing"
-        sys_x = box_x + (box_width - len(sys_title)) // 2
-        stdscr.attron(curses.color_pair(2))
-        stdscr.addstr(box_y + 3, sys_x, sys_title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(2))
+        stdscr.addstr(1, 2, "BERKE OS - System Initializing", curses.A_BOLD | curses.color_pair(1))
 
         for i, (stage_name, status) in enumerate(stages):
-            stage_text = f"{i+1}. {stage_name} [{status}]"
-            stage_x = box_x + 2
-            row = box_y + 5 + i
-            if row >= box_y + box_height - 3:
+            row = 3 + i * 2
+            if row >= rows - 2:
                 break
             if i == current_stage and status == "/":
-                stdscr.attron(curses.color_pair(4))
                 anim_chars = "/-\\|"
                 stage_text = f"{i+1}. {stage_name} [{anim_chars[int(time.time() * 4) % 4]}]"
-                stdscr.addstr(row, stage_x, stage_text[:box_width-4], curses.A_BOLD)
-                sub_status_text = f"Status: {sub_status[:box_width-10]}"
-                sub_status_x = box_x + 2
-                stdscr.addstr(row + 1, sub_status_x, sub_status_text[:box_width-4], curses.A_BOLD)
-                stdscr.attroff(curses.color_pair(4))
+                stdscr.addstr(row, 2, stage_text[:cols-4], curses.color_pair(2) | curses.A_BOLD)
+                stdscr.addstr(row + 1, 4, f"Status: {sub_status[:cols-8]}", curses.color_pair(2))
             elif status == "DONE":
-                stdscr.attron(curses.color_pair(3))
-                stdscr.addstr(row, stage_x, stage_text[:box_width-4])
-                stdscr.attroff(curses.color_pair(3))
+                stage_text = f"{i+1}. {stage_name} [DONE]"
+                stdscr.addstr(row, 2, stage_text[:cols-4], curses.color_pair(3))
             else:
-                stdscr.attron(curses.color_pair(5))
-                stdscr.addstr(row, stage_x, stage_text[:box_width-4])
-                stdscr.attroff(curses.color_pair(5))
-
-        if sub_status and stages[current_stage][1] == "DONE":
-            sub_status_text = f"Status: {sub_status[:box_width-10]}"
-            sub_status_x = box_x + 2
-            stdscr.attron(curses.color_pair(4))
-            stdscr.addstr(box_y + 5 + current_stage + 1, sub_status_x, sub_status_text[:box_width-4], curses.A_BOLD)
-            stdscr.attroff(curses.color_pair(4))
+                stage_text = f"{i+1}. {stage_name} [-]"
+                stdscr.addstr(row, 2, stage_text[:cols-4], curses.color_pair(4))
 
         stdscr.refresh()
     except Exception as e:
@@ -232,6 +152,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
     try:
         clean_temp()
         
+        # Verify essential commands
         for cmd in REQUIRED_COMMANDS:
             sub_status = f"Checking {cmd}"
             update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -244,23 +165,17 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                             raise Exception("Python 3.9 version mismatch")
                     log_message(f"{cmd} found: {result.stdout.strip()}", logger)
                     break
-                except Exception:
-                    sub_status = f"Installing {cmd}"
-                    update_display(stdscr, stages, current_stage, sub_status, logger)
-                    try:
-                        subprocess.run(["sudo", "tce-load", "-w", "-i", cmd], check=True, timeout=300, capture_output=True)
-                        result = subprocess.run(["which", cmd], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
-                        if cmd == "python3.9":
-                            result = subprocess.run([cmd, "--version"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
-                            if "3.9" not in result.stdout:
-                                raise Exception("Python 3.9 installation failed")
-                        log_message(f"{cmd} installed: {result.stdout.strip()}", logger)
-                        break
-                    except Exception as e:
-                        if attempt == RETRY_ATTEMPTS - 1:
-                            raise Exception(f"{cmd} installation failed: {e}")
-                        time.sleep(2)
+                except Exception as e:
+                    if attempt == RETRY_ATTEMPTS - 1:
+                        raise Exception(f"Required command {cmd} not found: {e}")
+                    time.sleep(1)
 
+        # Ensure TCE directory exists
+        TCE_DIR.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(TCE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["sudo", "chmod", "775", str(TCE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+
+        # Install TCE packages
         for pkg in REQUIRED_TCE_PACKAGES:
             if pkg in REQUIRED_COMMANDS:
                 continue
@@ -290,14 +205,15 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                             xorg_conf_dir = Path("/etc/X11/xorg.conf.d")
                             xorg_conf = xorg_conf_dir / "20-xorg-vesa.conf"
                             xorg_conf_dir.mkdir(parents=True, exist_ok=True)
-                            with open("/tmp/20-xorg-vesa.conf", "w") as f:
+                            subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(xorg_conf_dir)], check=True, timeout=TIMEOUT_SECONDS)
+                            subprocess.run(["sudo", "chmod", "775", str(xorg_conf_dir)], check=True, timeout=TIMEOUT_SECONDS)
+                            with open(xorg_conf, "w") as f:
                                 f.write(
                                     'Section "Device"\n'
                                     '    Identifier "Card0"\n'
                                     '    Driver "vesa"\n'
                                     'EndSection\n'
                                 )
-                            subprocess.run(["sudo", "mv", "/tmp/20-xorg-vesa.conf", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                             subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                             subprocess.run(["sudo", "chmod", "664", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                             log_message("VESA driver configured", logger)
@@ -305,24 +221,32 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
                         raise Exception(f"{pkg} installation failed: {e}")
-                    time.sleep(2)
+                    time.sleep(1)
+
+                # Update onboot.lst
                 try:
                     onboot_file = TCE_DIR / "onboot.lst"
-                    subprocess.run(["sudo", "touch", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "chmod", "664", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
-                    with open(onboot_file, "r") as f:
-                        content = f.read()
-                    if pkg not in content:
-                        with open("/tmp/onboot.lst", "w") as f:
-                            f.write(content.rstrip() + f"\n{pkg}\n")
-                        subprocess.run(["sudo", "mv", "/tmp/onboot.lst", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
+                    if not onboot_file.exists():
+                        with open(onboot_file, "w") as f:
+                            f.write("")
                         subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
                         subprocess.run(["sudo", "chmod", "664", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
-                        subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
+                    
+                    with open(onboot_file, "r") as f:
+                        content = f.read().strip()
+                    if pkg not in content:
+                        with open(onboot_file, "a") as f:
+                            f.write(f"{pkg}\n")
+                        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["sudo", "chmod", "664", str(onboot_file)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10, capture_output=True)
+                        log_message(f"Added {pkg} to onboot.lst", logger)
                 except Exception as e:
-                    raise Exception(f"onboot.lst update failed: {e}")
+                    if attempt == RETRY_ATTEMPTS - 1:
+                        raise Exception(f"onboot.lst update failed for {pkg}: {e}")
+                    time.sleep(1)
 
+        # Install Node.js
         sub_status = "Checking Node.js"
         update_display(stdscr, stages, current_stage, sub_status, logger)
         for attempt in range(RETRY_ATTEMPTS):
@@ -343,14 +267,14 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     if node_tar.exists():
                         node_tar.unlink()
                     if node_extract_dir.exists():
-                        shutil.rmtree(node_extract_dir)
+                        shutil.rmtree(node_extract_dir, ignore_errors=True)
                     if target_dir.exists():
-                        shutil.rmtree(target_dir)
+                        shutil.rmtree(target_dir, ignore_errors=True)
                     subprocess.run(["sudo", "wget", "-O", str(node_tar), NODE_URL], check=True, timeout=300, capture_output=True)
                     node_extract_dir.mkdir(parents=True, exist_ok=True)
-                    subprocess.run(["sudo", "tar", "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300)
+                    subprocess.run(["sudo", "tar", "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300, capture_output=True)
                     extracted_dir = next(node_extract_dir.iterdir())
-                    subprocess.run(["sudo", "mv", str(extracted_dir), str(target_dir)], check=True, timeout=10)
+                    subprocess.run(["sudo", "mv", str(extracted_dir), str(target_dir)], check=True, timeout=10, capture_output=True)
                     for binary in ["node", "npm"]:
                         binary_path = target_dir / "bin" / binary
                         link_path = Path(f"/usr/local/bin/{binary}")
@@ -368,12 +292,12 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
                         raise Exception(f"Node.js installation failed: {e}")
-                    time.sleep(2)
+                    time.sleep(1)
                 finally:
                     if node_tar.exists():
                         node_tar.unlink()
                     if node_extract_dir.exists():
-                        shutil.rmtree(node_extract_dir)
+                        shutil.rmtree(node_extract_dir, ignore_errors=True)
 
         sub_status = "Dependencies completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -403,7 +327,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Disk directory creation failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Mounting disk"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -418,7 +342,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
                         sub_status = "Formatting disk"
                         update_display(stdscr, stages, current_stage, sub_status, logger)
                         subprocess.run(["sudo", "mkfs.ext4", "-F", "/dev/sda1"], check=True, timeout=600, capture_output=True)
-                        subprocess.run(["sudo", "mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10)
+                        subprocess.run(["sudo", "mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10, capture_output=True)
                 subprocess.run(["sudo", "mount", "-o", "remount,rw", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
                 result = subprocess.run(["df", "-h", str(BASE_DIR)], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if str(BASE_DIR) not in result.stdout:
@@ -427,7 +351,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Disk mount failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Creating directories"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -444,7 +368,7 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
                         raise Exception(f"Directory creation failed: {directory}: {e}")
-                    time.sleep(2)
+                    time.sleep(1)
 
         sub_status = "Disk setup completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -474,7 +398,7 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Backup directory creation failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Backing up files"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -484,11 +408,12 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 backup_file = BACKUP_DIR / f"backup_{timestamp}.tar.gz"
                 dirs_to_backup = [SYS_DIR, APP_DIR, TCE_DIR]
                 for d in dirs_to_backup:
-                    d.mkdir(parents=True, exist_ok=True)
-                    subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(d)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "chmod", "775", str(d)], check=True, timeout=TIMEOUT_SECONDS)
+                    if not d.exists():
+                        d.mkdir(parents=True, exist_ok=True)
+                        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(d)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["sudo", "chmod", "775", str(d)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(
-                    ["sudo", "tar", "-czf", str(backup_file)] + [str(d) for d in dirs_to_backup],
+                    ["sudo", "tar", "-czf", str(backup_file)] + [str(d) for d in dirs_to_backup if d.exists()],
                     check=True, timeout=600, capture_output=True
                 )
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(backup_file)], check=True, timeout=TIMEOUT_SECONDS)
@@ -499,7 +424,7 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Backup creation failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Verifying backup"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -509,12 +434,11 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 if not backup_hash:
                     raise Exception("Backup hash calculation failed")
                 backup_log = BACKUP_DIR / "backup_log.txt"
-                with open("/tmp/backup_log.txt", "a") as f:
+                with open(backup_log, "a") as f:
                     f.write(f"{timestamp}: {backup_file}, SHA256: {backup_hash}\n")
-                subprocess.run(["sudo", "mv", "/tmp/backup_log.txt", str(backup_log)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(backup_log)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chmod", "664", str(backup_log)], check=True, timeout=TIMEOUT_SECONDS)
-                subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
+                subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10, capture_output=True)
                 if not backup_log.exists():
                     raise Exception("Backup log creation failed")
                 log_message(f"Backup created: {backup_file}, SHA256: {backup_hash}", logger)
@@ -522,7 +446,7 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Backup verification failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Backup completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -549,7 +473,10 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
                 sub_status = "Cloning EDEX-UI"
                 update_display(stdscr, stages, current_stage, sub_status, logger)
                 if EDEX_DIR.exists():
-                    shutil.rmtree(EDEX_DIR)
+                    shutil.rmtree(EDEX_DIR, ignore_errors=True)
+                EDEX_DIR.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(EDEX_DIR.parent)], check=True, timeout=TIMEOUT_SECONDS)
+                subprocess.run(["sudo", "chmod", "775", str(EDEX_DIR.parent)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "git", "clone", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600, capture_output=True)
                 subprocess.run(["sudo", "chown", "-R", f"{USER}:{GROUP}", str(EDEX_DIR)], check=True, timeout=10)
                 subprocess.run(["sudo", "chmod", "-R", "775", str(EDEX_DIR)], check=True, timeout=10)
@@ -560,7 +487,7 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"EDEX-UI clone failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "EDEX-UI downloaded"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -582,10 +509,13 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         for attempt in range(RETRY_ATTEMPTS):
             try:
                 if (EDEX_DIR / "node_modules").exists():
-                    shutil.rmtree(EDEX_DIR / "node_modules")
+                    shutil.rmtree(EDEX_DIR / "node_modules", ignore_errors=True)
+                env = os.environ.copy()
+                env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
+                env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
                 subprocess.run(
                     ["sudo", "npm", "install", "--unsafe-perm", "--no-audit", "--no-fund"],
-                    cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True
+                    cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True, env=env
                 )
                 if not (EDEX_DIR / "node_modules").exists():
                     raise Exception("npm dependencies verification failed")
@@ -594,7 +524,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"npm dependencies installation failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Customizing settings"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -602,15 +532,14 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             try:
                 settings_path = EDEX_DIR / "settings.json"
                 settings = {
-                    "shell": "/bin/bash",
-                    "shellArgs": ["-c", f"export PATH=$PATH:/usr/local/bin; exec bash"],
+                    "shell": "/bin/sh",
+                    "shellArgs": ["-c", f"export PATH=$PATH:/usr/local/bin:/usr/bin:/bin; exec sh"],
                     "theme": "tron",
                     "window": {"title": f"{SYSTEM_NAME} EDEX-UI"},
                     "performance": {"lowPowerMode": False, "gpuAcceleration": True}
                 }
-                with open("/tmp/settings.json", "w") as f:
+                with open(settings_path, "w") as f:
                     json.dump(settings, f, indent=2)
-                subprocess.run(["sudo", "mv", "/tmp/settings.json", str(settings_path)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(settings_path)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chmod", "664", str(settings_path)], check=True, timeout=TIMEOUT_SECONDS)
                 with open(settings_path, "r") as f:
@@ -621,7 +550,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"EDEX-UI settings customization failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Optimizing Xorg"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -632,7 +561,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
                 xorg_conf_dir.mkdir(parents=True, exist_ok=True)
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(xorg_conf_dir)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chmod", "775", str(xorg_conf_dir)], check=True, timeout=TIMEOUT_SECONDS)
-                with open("/tmp/xorg.conf", "w") as f:
+                with open(xorg_conf, "w") as f:
                     f.write(
                         'Section "Device"\n'
                         '    Identifier "Card0"\n'
@@ -640,7 +569,6 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
                         '    Option "AccelMethod" "exa"\n'
                         'EndSection\n'
                     )
-                subprocess.run(["sudo", "mv", "/tmp/xorg.conf", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chmod", "664", str(xorg_conf)], check=True, timeout=TIMEOUT_SECONDS)
                 if not xorg_conf.exists():
@@ -650,7 +578,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Xorg optimization failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "EDEX-UI installation completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -667,14 +595,20 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
     process = None
 
     def cleanup():
-        if process and process.poll() is None:
-            try:
+        try:
+            if process and process.poll() is None:
                 os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 process.wait(timeout=TIMEOUT_SECONDS)
-            except Exception:
+        except Exception:
+            try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        subprocess.run(["sudo", "killall", "-q", "node"], capture_output=True, timeout=TIMEOUT_SECONDS)
-        subprocess.run(["sudo", "killall", "-q", "Xorg"], capture_output=True, timeout=TIMEOUT_SECONDS)
+            except Exception:
+                pass
+        try:
+            subprocess.run(["sudo", "killall", "-q", "node"], capture_output=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["sudo", "killall", "-q", "Xorg"], capture_output=True, timeout=TIMEOUT_SECONDS)
+        except Exception:
+            pass
         clean_temp()
 
     try:
@@ -687,10 +621,12 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 result = subprocess.run(["pgrep", "-x", "Xorg"], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
                     xorg_process = subprocess.Popen(
-                        ["sudo", "Xorg", ":0", "-quiet"],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid
+                        ["sudo", "Xorg", ":0", "-quiet", "-nolisten", "tcp"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        preexec_fn=os.setsid
                     )
-                    time.sleep(3)
+                    time.sleep(2)
                     if xorg_process.poll() is not None:
                         raise Exception("Xorg failed to start")
                 log_message("X11 environment prepared", logger)
@@ -698,7 +634,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"X11 startup failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Launching EDEX-UI"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -706,9 +642,10 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             try:
                 env = os.environ.copy()
                 env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
-                env["LD_LIBRARY_PATH"] = f"/usr/local/lib:{env.get('LD_LIBRARY_PATH', '')}"
+                env["LD_LIBRARY_PATH"] = f"/usr/local/lib:/usr/lib:{env.get('LD_LIBRARY_PATH', '')}"
+                env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
                 process = subprocess.Popen(
-                    ["sudo", "npm", "start", "--unsafe-perm"],
+                    ["sudo", "npm", "start"],
                     cwd=str(EDEX_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -728,7 +665,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"EDEX-UI startup failed: {e}")
-                time.sleep(2)
+                time.sleep(5)
 
         sub_status = "EDEX-UI started"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -751,40 +688,39 @@ def configure_autostart(stdscr, stages: List[Tuple[str, str]], current_stage: in
             try:
                 script_path = BASE_DIR / "kontrol.py"
                 if not script_path.exists():
-                    raise Exception("kontrol.py not found")
+                    script_path = Path(__file__).resolve()
+                    subprocess.run(["sudo", "cp", str(script_path), str(BASE_DIR / "kontrol.py")], check=True, timeout=TIMEOUT_SECONDS)
                 subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(script_path)], check=True, timeout=TIMEOUT_SECONDS)
-                subprocess.run(["sudo", "chmod", "775", str(script_path)], check=True, timeout=TIMEOUT_SECONDS)
+                subprocess.run(["sudo", "chmod", "755", str(script_path)], check=True, timeout=TIMEOUT_SECONDS)
                 BOOT_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(BOOT_SCRIPT.parent)], check=True, timeout=TIMEOUT_SECONDS)
+                subprocess.run(["sudo", "chmod", "755", str(BOOT_SCRIPT.parent)], check=True, timeout=TIMEOUT_SECONDS)
+
                 if BOOT_SCRIPT.exists():
                     with open(BOOT_SCRIPT, "r") as f:
-                        content = f.read()
+                        content = f.read().strip()
                     if str(script_path) in content:
                         log_message("Autostart already configured", logger)
                     else:
                         subprocess.run(["sudo", "cp", str(BOOT_SCRIPT), f"{BOOT_SCRIPT}.bak"], check=True, timeout=TIMEOUT_SECONDS)
-                        with open("/tmp/bootlocal.sh", "w") as f:
-                            f.write(content.rstrip() + f"\npython3.9 {script_path} --skip-ui &\n")
-                        subprocess.run(["sudo", "mv", "/tmp/bootlocal.sh", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                        subprocess.run(["sudo", "chmod", "775", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                        subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
-                        log_message("Autostart configured", logger)
+                        with open(BOOT_SCRIPT, "w") as f:
+                            f.write(content + f"\npython3.9 {script_path} --skip-ui &\n")
                 else:
-                    with open("/tmp/bootlocal.sh", "w") as f:
+                    with open(BOOT_SCRIPT, "w") as f:
                         f.write(f"#!/bin/sh\npython3.9 {script_path} --skip-ui &\n")
-                    subprocess.run(["sudo", "mv", "/tmp/bootlocal.sh", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "chmod", "775", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
-                    log_message("Boot script created", logger)
+                subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
+                subprocess.run(["sudo", "chmod", "755", str(BOOT_SCRIPT)], check=True, timeout=TIMEOUT_SECONDS)
+                subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10, capture_output=True)
+                
                 with open(BOOT_SCRIPT, "r") as f:
                     if str(script_path) not in f.read():
                         raise Exception("Boot script content verification failed")
+                log_message("Boot script configured", logger)
                 break
             except Exception as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"Autostart configuration failed: {e}")
-                time.sleep(2)
+                time.sleep(1)
 
         sub_status = "Autostart configuration completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -806,39 +742,28 @@ def main(stdscr):
         rows, cols = stdscr.getmaxyx()
         if rows < MIN_TERM_SIZE[0] or cols < MIN_TERM_SIZE[1]:
             raise Exception(f"Terminal size too small: {MIN_TERM_SIZE[1]}x{MIN_TERM_SIZE[0]}")
-        box_width = min(cols - 4, 60)
-        box_height = min(rows - 4, 15)
-        box_y = (rows - box_height) // 2
-        box_x = (cols - box_width) // 2
-
         curses.start_color()
         curses.init_pair(1, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)
-        draw_border(stdscr, box_y, box_x, box_height, box_width)
-
-        title = "B E R K E  O S"
-        title_x = box_x + (box_width - len(title)) // 2
-        stdscr.attron(curses.color_pair(1))
-        stdscr.addstr(box_y + 1, title_x, title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(1))
-
-        status = "Waiting"
-        status_x = box_x + (box_width - len(status)) // 2
-        stdscr.attron(curses.color_pair(2))
-        stdscr.addstr(box_y + box_height // 2, status_x, status)
-        stdscr.attroff(curses.color_pair(2))
+        curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        stdscr.addstr(1, 2, "BERKE OS - Initializing", curses.A_BOLD | curses.color_pair(1))
         stdscr.refresh()
-        time.sleep(2)
+        time.sleep(1)
     except Exception as e:
         log_message(f"Curses initialization failed: {e}", logger)
         display_error(stdscr, "Initialization", str(e), logger)
 
     skip_ui = "--skip-ui" in sys.argv
     if skip_ui:
-        if EDEX_DIR.exists() and (EDEX_DIR / "package.json").exists():
-            start_edex_ui(None, [("EDEX-UI START", "/")], 0, logger)
-        else:
-            log_message("EDEX-UI not found, full installation required", logger)
+        try:
+            if EDEX_DIR.exists() and (EDEX_DIR / "package.json").exists():
+                start_edex_ui(None, [("EDEX-UI START", "/")], 0, logger)
+            else:
+                log_message("EDEX-UI not found, full installation required", logger)
+                sys.exit(1)
+        except Exception as e:
+            log_message(f"Skip UI mode failed: {e}", logger)
             sys.exit(1)
 
     stages = [
@@ -874,26 +799,8 @@ def main(stdscr):
 
     try:
         stdscr.clear()
-        rows, cols = stdscr.getmaxyx()
-        box_width = min(cols - 4, 60)
-        box_height = min(rows - 4, 15)
-        box_y = (rows - box_height) // 2
-        box_x = (cols - box_width) // 2
-        draw_border(stdscr, box_y, box_x, box_height, box_width)
-
-        title = "B E R K E  O S"
-        title_x = box_x + (box_width - len(title)) // 2
-        stdscr.attron(curses.color_pair(1))
-        stdscr.addstr(box_y + 1, title_x, title, curses.A_BOLD)
-        stdscr.attroff(curses.color_pair(1))
-
-        complete_msg = "Installation Completed Successfully!"
-        complete_x = box_x + (box_width - len(complete_msg)) // 2
-        stdscr.addstr(box_y + 5, complete_x, complete_msg, curses.A_BOLD)
-
-        prompt = "Press any key to continue..."
-        prompt_x = box_x + (box_width - len(prompt)) // 2
-        stdscr.addstr(box_y + 7, prompt_x, prompt)
+        stdscr.addstr(1, 2, "BERKE OS - Installation Completed", curses.A_BOLD | curses.color_pair(1))
+        stdscr.addstr(3, 2, "Press any key to continue...")
         stdscr.refresh()
         stdscr.getch()
     except Exception as e:
@@ -903,8 +810,11 @@ if __name__ == "__main__":
     def signal_handler(sig, frame):
         logger = setup_logger()
         log_message(f"Signal received: {sig}", logger)
-        subprocess.run(["sudo", "killall", "-q", "node"], capture_output=True, timeout=TIMEOUT_SECONDS)
-        subprocess.run(["sudo", "killall", "-q", "Xorg"], capture_output=True, timeout=TIMEOUT_SECONDS)
+        try:
+            subprocess.run(["sudo", "killall", "-q", "node"], capture_output=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["sudo", "killall", "-q", "Xorg"], capture_output=True, timeout=TIMEOUT_SECONDS)
+        except Exception:
+            pass
         clean_temp()
         sys.exit(1)
 
@@ -915,5 +825,5 @@ if __name__ == "__main__":
         curses.wrapper(main)
     except Exception as e:
         logger = setup_logger()
-        log_message(f"{SYSTEM_NAME} crashed: {e}", logger)
+        log_message(f"{SYSTEM_NAME} failed: {e}", logger)
         sys.exit(1)
