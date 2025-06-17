@@ -56,92 +56,37 @@ def calculate_file_hash(file_path):
         log_message(f"Dosya karması hesaplanamadı: {file_path}: {e}")
         return None
 
-# System checks
-def check_system():
-    log_message(f"{SYSTEM_NAME} sistem kontrol ediliyor...")
-    status = True
-    errors = []
-
-    # CPU check
+# Disk setup
+def setup_disk():
+    log_message("Disk yapılandırılıyor...")
     try:
-        with open("/proc/cpuinfo") as f:
-            if "processor" not in f.read():
-                errors.append("CPU bilgileri alınamadı")
-                status = False
-    except Exception as e:
-        errors.append(f"CPU kontrolü başarısız: {e}")
-        status = False
-
-    # RAM check
-    try:
-        result = subprocess.run(["free", "-m"], capture_output=True, text=True, timeout=5)
-        mem = int(result.stdout.splitlines()[1].split()[1])
-        if mem < 100:
-            errors.append(f"RAM yetersiz ({mem} MB)")
-            status = False
-    except Exception as e:
-        errors.append(f"RAM kontrolü başarısız: {e}")
-        status = False
-
-    # Storage check
-    try:
-        if not os.path.exists("/dev/sda"):
-            errors.append("Disk /dev/sda mevcut değil")
-            status = False
-        else:
-            subprocess.run(["sudo", "mkdir", "-p", ROOT_DIR], check=True)
-            subprocess.run(["sudo", "chmod", "755", ROOT_DIR], check=True)
+        subprocess.run(["sudo", "mkdir", "-p", ROOT_DIR], check=True)
+        subprocess.run(["sudo", "chmod", "755", ROOT_DIR], check=True)
+        try:
+            subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
+        except subprocess.CalledProcessError:
+            log_message("Disk bağlama başarısız, biçimlendirme deneniyor...")
             try:
+                subprocess.run(["sudo", "fsck", "/dev/sda1", "-y"], check=True)
+                subprocess.run(["sudo", "parted", "/dev/sda", "mklabel", "msdos"], check=True, stderr=subprocess.DEV_NULL)
+                subprocess.run(["sudo", "parted", "/dev/sda", "mkpart", "primary", "ext4", "1MiB", "100%"], check=True)
+                subprocess.run(["sudo", "mkfs.ext4", "/dev/sda1"], check=True)
                 subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
-            except subprocess.CalledProcessError:
-                log_message("Disk bağlama başarısız, biçimlendirme deneniyor...")
-                try:
-                    subprocess.run(["sudo", "fsck", "/dev/sda1", "-y"], check=True)
-                    subprocess.run(["sudo", "parted", "/dev/sda", "mklabel", "msdos"], check=True, stderr=subprocess.DEVNULL)
-                    subprocess.run(["sudo", "parted", "/dev/sda", "mkpart", "primary", "ext4", "1MiB", "100%"], check=True)
-                    subprocess.run(["sudo", "mkfs.ext4", "/dev/sda1"], check=True)
-                    subprocess.run(["sudo", "mount", "/dev/sda1", ROOT_DIR], check=True)
-                except Exception as e:
-                    errors.append(f"Disk biçimlendirme başarısız: {e}")
-                    status = False
-            subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
-            subprocess.run(["sudo", "mkdir", "-p", SYSTEM_DIR], check=True)
-            subprocess.run(["sudo", "chmod", "755", SYSTEM_DIR], check=True)
-    except Exception as e:
-        errors.append(f"Depolama yapılandırması başarısız: {e}")
-        status = False
-
-    # Boot check
-    try:
-        with open("/etc/issue") as f:
-            if "Tiny Core" not in f.read():
-                errors.append("Tiny Core boot doğrulanamadı")
-                status = False
-    except Exception as e:
-        errors.append(f"Boot kontrolü başarısız: {e}")
-        status = False
-
-    if errors:
-        log_message("Sistem kontrol hataları: " + "; ".join(errors))
-    return status, errors
-
-# Disk optimization
-def optimize_disk():
-    log_message("Disk bölümleri optimize ediliyor...")
-    try:
-        subprocess.run(["sudo", "fsck", "/dev/sda1", "-f", "-y"], check=True)
+            except Exception as e:
+                log_message(f"Disk biçimlendirme başarısız: {e}")
+                return False
         subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
         dirs = [TCE_DIR, HOME_DIR, SYSTEM_DIR, APPS_DIR, BACKUP_DIR, os.path.join(SYSTEM_DIR, "logs")]
         for d in dirs:
             subprocess.run(["sudo", "mkdir", "-p", d], check=True)
             subprocess.run(["sudo", "chmod", "755", d], check=True)
-        log_message("BerkeOS dosya sistemi oluşturuldu")
+        log_message("Disk yapılandırması tamamlandı")
         return True
     except Exception as e:
-        log_message(f"Disk optimizasyonu başarısız: {e}")
+        log_message(f"Disk yapılandırması başarısız: {e}")
         return False
 
-# Network connection (Wi-Fi and Ethernet)
+# Network connection (Ethernet and Wi-Fi)
 def check_and_connect_network(stdscr):
     log_message("Ağ bağlantısı kontrol ediliyor...")
     try:
@@ -169,14 +114,14 @@ def check_and_connect_network(stdscr):
         networks = re.findall(r'ESSID:"(.*?)"', result.stdout)
         if not networks:
             log_message("Wi-Fi ağları bulunamadı")
-            display_status(stdscr, "Hata: Wi-Fi ağları bulunamadı!")
+            display_status(stdscr, "Uyarı: Wi-Fi ağları bulunamadı, devam ediliyor...")
             time.sleep(3)
-            return False
+            return True  # Wi-Fi olmadan devam et
     except Exception as e:
         log_message(f"iwlist komutu başarısız: {e}")
-        display_status(stdscr, "Hata: Wi-Fi tarama başarısız!")
+        display_status(stdscr, "Uyarı: Wi-Fi tarama başarısız, devam ediliyor...")
         time.sleep(3)
-        return False
+        return True
 
     stdscr.clear()
     stdscr.addstr(0, 0, f"{SYSTEM_NAME} Wi-Fi Ağı Seçin:")
@@ -212,9 +157,9 @@ def check_and_connect_network(stdscr):
         return True
     except Exception as e:
         log_message(f"Wi-Fi bağlantısı başarısız: {e}")
-        display_status(stdscr, "Hata: Wi-Fi bağlantısı başarısız!")
+        display_status(stdscr, "Uyarı: Wi-Fi bağlantısı başarısız, devam ediliyor...")
         time.sleep(3)
-        return False
+        return True
 
 # Install Tiny Core package
 def install_tce_package(package_name):
@@ -439,7 +384,7 @@ def save_config(config):
         log_message(f"Konfigürasyon kaydedilemedi: {e}")
 
 # Display status
-def display_status(stdscr, status, error=False):
+def display_status(stdscr, status, wait_for_key=True):
     try:
         stdscr.clear()
         rows, cols = stdscr.getmaxyx()
@@ -453,37 +398,41 @@ def display_status(stdscr, status, error=False):
             "Berke Oruç tarafından yapılmıştır\n"
         )
         lines = compact_ascii.splitlines()
-        start_row = max(0, (rows - len(lines) - 2) // 2)
-        start_col = max(0, (cols - max(len(line) for line in lines)) // 2)
-        if rows >= len(lines) + 2 and cols >= max(len(line) for line in lines):
+        max_line_len = max(len(line.rstrip()) for line in lines)
+        start_row = max(0, (rows - len(lines) - 3) // 2)
+        start_col = max(0, (cols - max_line_len) // 2)
+        if rows >= len(lines) + 3 and cols >= max_line_len:
             for i, line in enumerate(lines):
                 stdscr.addstr(start_row + i, start_col, line.rstrip())
             stdscr.addstr(start_row + len(lines) + 1, start_col, f"Durum: {status}")
-            if not error:
+            if wait_for_key:
                 stdscr.addstr(start_row + len(lines) + 2, start_col, "Devam etmek için bir tuşa basın...")
         else:
-            stdscr.addstr(0, 0, f"Durum: {status}")
-            if not error:
-                stdscr.addstr(1, 0, "Devam etmek için bir tuşa basın...")
+            stdscr.addstr(0, 0, f"{compact_ascii.rstrip()}\nDurum: {status}")
+            if wait_for_key:
+                stdscr.addstr(len(lines) + 1, 0, "Devam etmek için bir tuşa basın...")
         stdscr.refresh()
-        if not error:
+        if wait_for_key:
             stdscr.getch()
     except Exception as e:
         log_message(f"Ekran güncelleme başarısız: {e}")
-        print(f"Durum: {status}\nBerke Oruç tarafından yapılmıştır")
-        if not error:
+        print(f"{compact_ascii.rstrip()}\nDurum: {status}")
+        if wait_for_key:
             print("Devam etmek için bir tuşa basın...")
             input()
 
 def main(stdscr):
     try:
         curses.curs_set(0)
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+        stdscr.attron(curses.color_pair(1))
         display_status(stdscr, f"{SYSTEM_NAME} Başlatılıyor...")
+        stdscr.attroff(curses.color_pair(1))
     except Exception as e:
         log_message(f"Curses başlatılamadı: {e}")
         print(f"Curses başlatılamadı: {e}")
         time.sleep(3)
-        return
 
     config = load_config()
     if config.get("default_edex", False):
@@ -492,28 +441,13 @@ def main(stdscr):
             start_edex_ui()
         return
 
-    display_status(stdscr, "Sistem kontrol ediliyor...")
-    system_status, errors = check_system()
-    if not system_status:
-        error_msg = "Hata: Sistem uygun değil! Hatalar: " + "; ".join(errors)
-        display_status(stdscr, error_msg, error=True)
-        log_message(error_msg)
-        time.sleep(5)
-        return
-
-    display_status(stdscr, "Disk bölümleri optimize ediliyor...")
-    if not optimize_disk():
-        display_status(stdscr, "Hata: Disk optimizasyonu başarısız!", error=True)
-        log_message("Disk optimizasyonu başarısız")
-        time.sleep(5)
-        return
+    display_status(stdscr, "Disk yapılandırılıyor...")
+    if not setup_disk():
+        display_status(stdscr, "Uyarı: Disk yapılandırması başarısız, devam ediliyor...")
+        log_message("Disk yapılandırması başarısız, devam ediliyor")
 
     display_status(stdscr, "Ağ bağlantısı kontrol ediliyor...")
-    if not check_and_connect_network(stdscr):
-        display_status(stdscr, "Hata: Ağ bağlantısı sağlanamadı!", error=True)
-        log_message("Ağ bağlantısı sağlanamadı")
-        time.sleep(5)
-        return
+    check_and_connect_network(stdscr)
 
     display_status(stdscr, "Gerekli paketler yükleniyor...")
     for package in REQUIRED_TCE_PACKAGES:
@@ -524,31 +458,26 @@ def main(stdscr):
 
     display_status(stdscr, "Node.js ve npm yükleniyor...")
     if not install_node_npm():
-        display_status(stdscr, "Hata: Node.js veya npm yüklenemedi!", error=True)
+        display_status(stdscr, "Uyarı: Node.js veya npm yüklenemedi, devam ediliyor...")
         log_message("Node.js veya npm yüklenemedi")
-        time.sleep(5)
-        return
 
     display_status(stdscr, "EDEX-UI yükleniyor...")
     if not install_and_customize_edex_ui():
-        display_status(stdscr, "Hata: EDEX-UI yüklenemedi!", error=True)
+        display_status(stdscr, "Uyarı: EDEX-UI yüklenemedi, devam ediliyor...")
         log_message("EDEX-UI yüklenemedi")
         time.sleep(5)
         return
 
     display_status(stdscr, "bootlocal.sh yapılandırılıyor...")
     if not configure_bootlocal():
-        display_status(stdscr, "Hata: Önyükleme yapılandırması başarısız!", error=True)
+        display_status(stdscr, "Uyarı: Önyükleme yapılandırması başarısız, devam ediliyor...")
         log_message("Önyükleme yapılandırması başarısız")
-        time.sleep(5)
-        return
 
     display_status(stdscr, "Sistem yedekleniyor...")
     if not backup_system():
-        display_status(stdscr, "Hata: Yedekleme başarısız!", error=True)
+        display_status(stdscr, "Uyarı: Yedekleme başarısız, devam ediliyor...")
         log_message("Yedekleme başarısız")
-        time.sleep(5)
-        return
+        time.sleep(3)
 
     try:
         stdscr.clear()
@@ -562,11 +491,10 @@ def main(stdscr):
 
     display_status(stdscr, f"{SYSTEM_NAME} Kurulum Tamamlandı!")
     if start_edex_ui():
-        display_status(stdscr, f"{SYSTEM_NAME} EDEX-UI HAZIR!", error=True)
+        display_status(stdscr, f"{SYSTEM_NAME} EDEX-UI HAZIR!", wait_for_key=False)
     else:
-        display_status(stdscr, "Hata: EDEX-UI başlatılamadı!", error=True)
+        display_status(stdscr, "Uyarı: EDEX-UI başlatılamadı!", wait_for_key=False)
         log_message("EDEX-UI başlatılamadı")
-        time.sleep(5)
 
 if __name__ == "__main__":
     try:
