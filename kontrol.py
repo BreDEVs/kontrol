@@ -43,8 +43,8 @@ os.environ["LD_LIBRARY_PATH"] = f"{os.environ.get('LD_LIBRARY_PATH', '')}:/usr/l
 def setup_logger() -> Optional[logging.Logger]:
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(LOG_DIR)], check=True, timeout=TIMEOUT_SECONDS)
-        subprocess.run(["sudo", "chmod", "775", str(LOG_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["chown", f"{USER}:{GROUP}", str(LOG_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["chmod", "775", str(LOG_DIR)], check=True, timeout=TIMEOUT_SECONDS)
         
         logger = logging.getLogger('BerkeOS')
         logger.setLevel(logging.INFO)
@@ -53,8 +53,8 @@ def setup_logger() -> Optional[logging.Logger]:
         handler.setFormatter(formatter)
         logger.addHandler(handler)
         
-        subprocess.run(["sudo", "chown", f"{USER}:{GROUP}", str(LOG_FILE)], check=True, timeout=TIMEOUT_SECONDS)
-        subprocess.run(["sudo", "chmod", "664", str(LOG_FILE)], check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["chown", f"{USER}:{GROUP}", str(LOG_FILE)], check=True, timeout=TIMEOUT_SECONDS)
+        subprocess.run(["chmod", "664", str(LOG_FILE)], check=True, timeout=TIMEOUT_SECONDS)
         
         return logger
     except Exception as e:
@@ -82,7 +82,7 @@ def clean_temp() -> None:
             for item in temp_dir.iterdir():
                 try:
                     if item.is_file():
-                        subprocess.run(["sudo", "rm", "-f", str(item)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["rm", "-f", str(item)], check=True, timeout=TIMEOUT_SECONDS)
                     elif item.is_dir():
                         shutil.rmtree(item, ignore_errors=True)
                 except Exception:
@@ -166,12 +166,12 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
 def ensure_permissions(path: Path, user: str, group: str, mode: str) -> None:
     try:
         if path.exists():
-            subprocess.run(["sudo", "chown", "-R", f"{user}:{group}", str(path)], check=True, timeout=TIMEOUT_SECONDS)
-            subprocess.run(["sudo", "chmod", "-R", mode, str(path)], check=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["chown", "-R", f"{user}:{group}", str(path)], check=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["chmod", "-R", mode, str(path)], check=True, timeout=TIMEOUT_SECONDS)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["sudo", "chown", f"{user}:{group}", str(path.parent)], check=True, timeout=TIMEOUT_SECONDS)
-            subprocess.run(["sudo", "chmod", "775", str(path.parent)], check=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["chown", f"{user}:{group}", str(path.parent)], check=True, timeout=TIMEOUT_SECONDS)
+            subprocess.run(["chmod", "775", str(path.parent)], check=True, timeout=TIMEOUT_SECONDS)
     except Exception as e:
         log_message(f"Permission setting failed for {path}: {e}")
 
@@ -219,11 +219,12 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         break
                     sub_status = f"Installing {pkg}"
                     update_display(stdscr, stages, current_stage, sub_status, logger)
-                    subprocess.run(["sudo", "tce-load", "-w", "-i", pkg], check=True, timeout=300)
+                    subprocess.run(["tce-load", "-w", "-i", pkg], check=True, timeout=300)
                     log_message(f"{pkg} installed", logger)
                     if pkg == "Xorg-7.7":
                         try:
                             x11_dir = Path("/usr/local/lib/X11")
+                            ensure_permissions(x11_dir, USER, GROUP, "775")
                             if not x11_dir.exists():
                                 raise Exception("X11 directory not found")
                             result = subprocess.run(["Xorg", "-version"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
@@ -240,6 +241,14 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                                     'Section "Device"\n'
                                     '    Identifier "Card0"\n'
                                     '    Driver "vesa"\n'
+                                    'EndSection\n'
+                                    'Section "Screen"\n'
+                                    '    Identifier "Screen0"\n'
+                                    '    Device "Card0"\n'
+                                    '    DefaultDepth 24\n'
+                                    '    SubSection "Display"\n'
+                                    '        Modes "1024x768" "800x600" "640x480"\n'
+                                    '    EndSubSection\n'
                                     'EndSection\n'
                                 )
                             ensure_permissions(xorg_conf, USER, GROUP, "664")
@@ -264,7 +273,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         with open(onboot_file, "a") as f:
                             f.write(f"{pkg}\n")
                         ensure_permissions(onboot_file, USER, GROUP, "664")
-                        subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
+                        subprocess.run(["filetool.sh", "-b"], check=True, timeout=10)
                         log_message(f"Added {pkg} to onboot.lst", logger)
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
@@ -295,18 +304,18 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         shutil.rmtree(node_extract_dir, ignore_errors=True)
                     if target_dir.exists():
                         shutil.rmtree(target_dir, ignore_errors=True)
-                    subprocess.run(["sudo", "wget", "-O", str(node_tar), NODE_URL], check=True, timeout=300)
+                    subprocess.run(["wget", "-O", str(node_tar), NODE_URL], check=True, timeout=300)
                     node_extract_dir.mkdir(parents=True, exist_ok=True)
                     ensure_permissions(node_extract_dir, USER, GROUP, "775")
-                    subprocess.run(["sudo", "tar", "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300)
+                    subprocess.run(["tar", "-xJf", str(node_tar), "-C", str(node_extract_dir)], check=True, timeout=300)
                     extracted_dir = next(node_extract_dir.iterdir())
-                    subprocess.run(["sudo", "mv", str(extracted_dir), str(target_dir)], check=True, timeout=10)
+                    subprocess.run(["mv", str(extracted_dir), str(target_dir)], check=True, timeout=10)
                     for binary in ["node", "npm"]:
                         binary_path = target_dir / "bin" / binary
                         link_path = Path(f"/usr/local/bin/{binary}")
                         if link_path.exists():
                             link_path.unlink()
-                        subprocess.run(["sudo", "ln", "-s", str(binary_path), str(link_path)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["ln", "-s", str(binary_path), str(link_path)], check=True, timeout=TIMEOUT_SECONDS)
                     ensure_permissions(target_dir, USER, GROUP, "755")
                     result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                     npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
@@ -359,15 +368,15 @@ def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logge
             try:
                 result = subprocess.run(["mountpoint", "-q", str(BASE_DIR)], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
-                    subprocess.run(["sudo", "mkdir", "-p", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+                    subprocess.run(["mkdir", "-p", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
                     try:
-                        subprocess.run(["sudo", "mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10)
+                        subprocess.run(["mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10)
                     except Exception:
                         sub_status = "Formatting disk"
                         update_display(stdscr, stages, current_stage, sub_status, logger)
-                        subprocess.run(["sudo", "mkfs.ext4", "-F", "/dev/sda1"], check=True, timeout=600)
-                        subprocess.run(["sudo", "mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10)
-                subprocess.run(["sudo", "mount", "-o", "remount,rw", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["mkfs.ext4", "-F", "/dev/sda1"], check=True, timeout=600)
+                        subprocess.run(["mount", "/dev/sda1", str(BASE_DIR)], check=True, timeout=10)
+                subprocess.run(["mount", "-o", "remount,rw", str(BASE_DIR)], check=True, timeout=TIMEOUT_SECONDS)
                 result = subprocess.run(["df", "-h", str(BASE_DIR)], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if str(BASE_DIR) not in result.stdout:
                     raise Exception("Disk mount verification failed")
@@ -431,7 +440,7 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 for d in dirs_to_backup:
                     ensure_permissions(d, USER, GROUP, "775")
                 subprocess.run(
-                    ["sudo", "tar", "-czf", str(backup_file)] + [str(d) for d in dirs_to_backup if d.exists()],
+                    ["tar", "-czf", str(backup_file)] + [str(d) for d in dirs_to_backup if d.exists()],
                     check=True, timeout=600
                 )
                 ensure_permissions(backup_file, USER, GROUP, "664")
@@ -454,7 +463,7 @@ def verify_backup(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 with open(backup_log, "a") as f:
                     f.write(f"{timestamp}: {backup_file}, SHA256: {backup_hash}\n")
                 ensure_permissions(backup_log, USER, GROUP, "664")
-                subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
+                subprocess.run(["filetool.sh", "-b"], check=True, timeout=10)
                 if not backup_log.exists():
                     raise Exception("Backup log creation failed")
                 log_message(f"Backup created: {backup_file}, SHA256: {backup_hash}", logger)
@@ -492,7 +501,7 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
                 if EDEX_DIR.exists():
                     shutil.rmtree(EDEX_DIR, ignore_errors=True)
                 ensure_permissions(EDEX_DIR.parent, USER, GROUP, "775")
-                subprocess.run(["sudo", "git", "clone", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600)
+                subprocess.run(["git", "clone", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600)
                 ensure_permissions(EDEX_DIR, USER, GROUP, "775")
                 if not (EDEX_DIR / "package.json").exists():
                     raise Exception("EDEX-UI package.json not found")
@@ -529,7 +538,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
                 env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
                 env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
                 subprocess.run(
-                    ["sudo", "npm", "install", "--unsafe-perm", "--no-audit", "--no-fund"],
+                    ["npm", "install", "--no-audit", "--no-fund"],
                     cwd=str(EDEX_DIR), check=True, timeout=600, env=env
                 )
                 ensure_permissions(EDEX_DIR / "node_modules", USER, GROUP, "775")
@@ -581,6 +590,14 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
                         '    Driver "vesa"\n'
                         '    Option "AccelMethod" "exa"\n'
                         'EndSection\n'
+                        'Section "Screen"\n'
+                        '    Identifier "Screen0"\n'
+                        '    Device "Card0"\n'
+                        '    DefaultDepth 24\n'
+                        '    SubSection "Display"\n'
+                        '        Modes "1024x768" "800x600" "640x480"\n'
+                        '    EndSubSection\n'
+                        'EndSection\n'
                     )
                 ensure_permissions(xorg_conf, USER, GROUP, "664")
                 if not xorg_conf.exists():
@@ -618,8 +635,8 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             except Exception:
                 pass
         try:
-            subprocess.run(["sudo", "killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
-            subprocess.run(["sudo", "killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
+            subprocess.run(["killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
+            subprocess.run(["killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
         except Exception:
             pass
         clean_temp()
@@ -634,7 +651,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 result = subprocess.run(["pgrep", "-x", "Xorg"], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
                     xorg_process = subprocess.Popen(
-                        ["sudo", "Xorg", ":0", "-quiet", "-nolisten", "tcp"],
+                        ["Xorg", ":0", "-quiet", "-nolisten", "tcp"],
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         preexec_fn=os.setsid
@@ -658,7 +675,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 env["LD_LIBRARY_PATH"] = f"/usr/local/lib:/usr/lib:{env.get('LD_LIBRARY_PATH', '')}"
                 env["NODE_PATH"] = str(EDEX_DIR / "node_modules")
                 process = subprocess.Popen(
-                    ["sudo", "npm", "start"],
+                    ["npm", "start"],
                     cwd=str(EDEX_DIR),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -703,7 +720,7 @@ def configure_autostart(stdscr, stages: List[Tuple[str, str]], current_stage: in
                 script_path = BASE_DIR / "kontrol.py"
                 if not script_path.exists():
                     script_path = Path(__file__).resolve()
-                    subprocess.run(["sudo", "cp", str(script_path), str(BASE_DIR / "kontrol.py")], check=True, timeout=TIMEOUT_SECONDS)
+                    subprocess.run(["cp", str(script_path), str(BASE_DIR / "kontrol.py")], check=True, timeout=TIMEOUT_SECONDS)
                 ensure_permissions(script_path, USER, GROUP, "755")
                 ensure_permissions(BOOT_SCRIPT.parent, USER, GROUP, "755")
 
@@ -713,14 +730,14 @@ def configure_autostart(stdscr, stages: List[Tuple[str, str]], current_stage: in
                     if str(script_path) in content:
                         log_message("Autostart already configured", logger)
                     else:
-                        subprocess.run(["sudo", "cp", str(BOOT_SCRIPT), f"{BOOT_SCRIPT}.bak"], check=True, timeout=TIMEOUT_SECONDS)
+                        subprocess.run(["cp", str(BOOT_SCRIPT), f"{BOOT_SCRIPT}.bak"], check=True, timeout=TIMEOUT_SECONDS)
                         with open(BOOT_SCRIPT, "w") as f:
                             f.write(content + f"\npython3.9 {script_path} --skip-ui &\n")
                 else:
                     with open(BOOT_SCRIPT, "w") as f:
                         f.write(f"#!/bin/sh\npython3.9 {script_path} --skip-ui &\n")
                 ensure_permissions(BOOT_SCRIPT, USER, GROUP, "755")
-                subprocess.run(["sudo", "filetool.sh", "-b"], check=True, timeout=10)
+                subprocess.run(["filetool.sh", "-b"], check=True, timeout=10)
                 
                 with open(BOOT_SCRIPT, "r") as f:
                     if str(script_path) not in f.read():
@@ -825,8 +842,8 @@ if __name__ == "__main__":
         logger = setup_logger()
         log_message(f"Signal received: {sig}", logger)
         try:
-            subprocess.run(["sudo", "killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
-            subprocess.run(["sudo", "killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
+            subprocess.run(["killall", "-q", "node"], timeout=TIMEOUT_SECONDS)
+            subprocess.run(["killall", "-q", "Xorg"], timeout=TIMEOUT_SECONDS)
         except Exception:
             pass
         clean_temp()
