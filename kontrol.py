@@ -21,12 +21,16 @@ NODE_VERSION = "16.20.2"
 EDEX_REPO = "https://github.com/GitSquared/edex-ui.git"
 
 # Gerekli Tiny Core paketleri
-REQUIRED_TCE_PACKAGES = ["nodejs", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git", "w3m"]
+REQUIRED_TCE_PACKAGES = ["python3.9", "nodejs", "Xorg-7.7", "libX11", "libxss", "fontconfig", "git", "w3m", "wireless_tools", "wpa_supplicant", "virtualbox-guest"]
 
 # Log dosyasına yaz
 def log_message(message):
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: {message}\n")
+    try:
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: {message}\n")
+    except Exception as e:
+        print(f"Log yazma hatası: {e}")
 
 # Sistem kontrolleri
 def check_system():
@@ -35,55 +39,53 @@ def check_system():
 
     # CPU kontrolü
     try:
-        result = subprocess.run(["lscpu"], capture_output=True, text=True)
+        result = subprocess.run(["lscpu"], capture_output=True, text=True, timeout=10)
         if "CPU(s):" not in result.stdout:
             log_message("Hata: CPU bilgileri alınamadı!")
             status = False
-    except:
-        log_message("Hata: lscpu komutu çalışmadı!")
+    except Exception as e:
+        log_message(f"Hata: lscpu komutu çalışmadı: {e}")
         status = False
 
     # RAM kontrolü
     try:
-        result = subprocess.run(["free", "-m"], capture_output=True, text=True)
+        result = subprocess.run(["free", "-m"], capture_output=True, text=True, timeout=10)
         mem = int(result.stdout.splitlines()[1].split()[1])
         if mem < 512:
             log_message(f"Uyarı: RAM yetersiz ({mem} MB)!")
             status = False
-    except:
-        log_message("Hata: free komutu çalışmadı!")
+    except Exception as e:
+        log_message(f"Hata: free komutu çalışmadı: {e}")
         status = False
 
     # Depolama kontrolü
-    if not os.path.exists(ROOT_DIR):
-        log_message(f"Hata: {ROOT_DIR} mevcut değil!")
+    try:
+        if not os.path.exists(ROOT_DIR):
+            log_message(f"Hata: {ROOT_DIR} mevcut değil!")
+            status = False
+        else:
+            # Yazılabilirlik kontrolü
+            subprocess.run(["sudo", "mount", "-o", "remount,rw", ROOT_DIR], check=True)
+            subprocess.run(["sudo", "chmod", "-R", "u+w", ROOT_DIR], check=True)
+            if not os.path.exists(TCE_DIR):
+                log_message(f"{TCE_DIR} oluşturuluyor...")
+                os.makedirs(TCE_DIR, exist_ok=True)
+                os.makedirs(os.path.join(TCE_DIR, "optional"), exist_ok=True)
+                with open("/opt/.tce_dir", "w") as f:
+                    f.write(TCE_DIR)
+                log_message(f"{TCE_DIR} yapılandırıldı.")
+    except Exception as e:
+        log_message(f"Hata: Depolama yapılandırması başarısız: {e}")
         status = False
-    elif not os.path.exists(TCE_DIR):
-        log_message(f"{TCE_DIR} oluşturuluyor...")
-        subprocess.run(["sudo", "mkdir", "-p", TCE_DIR], check=True)
-        subprocess.run(["sudo", "mkdir", "-p", os.path.join(TCE_DIR, "optional")], check=True)
-        with open("/opt/.tce_dir", "w") as f:
-            f.write(TCE_DIR)
-        log_message(f"{TCE_DIR} yapılandırıldı.")
 
     # Boot kontrolü
     try:
-        result = subprocess.run(["dmesg"], capture_output=True, text=True)
+        result = subprocess.run(["dmesg"], capture_output=True, text=True, timeout=10)
         if "Tiny Core" not in result.stdout:
             log_message("Uyarı: Tiny Core boot doğrulanamadı!")
             status = False
-    except:
-        log_message("Hata: dmesg komutu çalışmadı!")
-        status = False
-
-    # X Window Sistemi kontrolü
-    try:
-        result = subprocess.run(["tce-audit", "check", "Xorg-7.7"], capture_output=True)
-        if result.returncode != 0:
-            log_message("Hata: Xorg-7.7 yüklü değil!")
-            install_tce_package("Xorg-7.7")
-    except:
-        log_message("Hata: Xorg-7.7 kontrolü başarısız!")
+    except Exception as e:
+        log_message(f"Hata: dmesg komutu çalışmadı: {e}")
         status = False
 
     return status
@@ -92,25 +94,25 @@ def check_system():
 def check_and_connect_network(stdscr):
     log_message("Ağ bağlantısı kontrol ediliyor...")
     try:
-        result = subprocess.run(["ping", "-c", "1", "google.com"], capture_output=True, text=True)
+        result = subprocess.run(["ping", "-c", "1", "google.com"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             log_message("Ağ bağlantısı mevcut.")
             return True
-    except:
-        log_message("Ağ bağlantısı yok, Wi-Fi taranıyor...")
+    except Exception as e:
+        log_message(f"Ağ bağlantısı yok, Wi-Fi taranıyor: {e}")
 
     # Wi-Fi tarama
     display_status(stdscr, "Wi-Fi ağları taranıyor...")
     try:
-        result = subprocess.run(["iwlist", "wlan0", "scan"], capture_output=True, text=True)
+        result = subprocess.run(["iwlist", "wlan0", "scan"], capture_output=True, text=True, timeout=30)
         networks = re.findall(r"ESSID:\"(.*?)\"", result.stdout)
         if not networks:
             log_message("Hata: Wi-Fi ağları bulunamadı!")
             display_status(stdscr, "Hata: Wi-Fi ağları bulunamadı!")
             time.sleep(5)
             return False
-    except:
-        log_message("Hata: iwlist komutu çalışmadı!")
+    except Exception as e:
+        log_message(f"Hata: iwlist komutu çalışmadı: {e}")
         display_status(stdscr, "Hata: Wi-Fi tarama başarısız!")
         time.sleep(5)
         return False
@@ -144,12 +146,12 @@ def check_and_connect_network(stdscr):
     try:
         with open("/tmp/wpa.conf", "w") as f:
             f.write(f'network={{\nssid="{selected_network}"\npsk="{password}"\n}}\n')
-        subprocess.run(["sudo", "wpa_supplicant", "-B", "-i", "wlan0", "-c", "/tmp/wpa.conf"], check=True)
-        subprocess.run(["sudo", "udhcpc", "-i", "wlan0"], check=True)
+        subprocess.run(["sudo", "wpa_supplicant", "-B", "-i", "wlan0", "-c", "/tmp/wpa.conf"], check=True, timeout=30)
+        subprocess.run(["sudo", "udhcpc", "-i", "wlan0"], check=True, timeout=30)
         log_message(f"{selected_network} bağlandı.")
         return True
-    except:
-        log_message("Hata: Wi-Fi bağlantısı başarısız!")
+    except Exception as e:
+        log_message(f"Hata: Wi-Fi bağlantısı başarısız: {e}")
         display_status(stdscr, "Hata: Wi-Fi bağlantısı başarısız!")
         time.sleep(5)
         return False
@@ -158,42 +160,57 @@ def check_and_connect_network(stdscr):
 def install_tce_package(package_name):
     try:
         log_message(f"Yükleniyor: {package_name}")
-        result = subprocess.run(["tce-load", "-w", "-i", package_name], capture_output=True, text=True)
+        result = subprocess.run(["tce-load", "-w", "-i", package_name], capture_output=True, text=True, timeout=300)
         if result.returncode == 0:
             log_message(f"{package_name} başarıyla yüklendi.")
             with open(os.path.join(TCE_DIR, "onboot.lst"), "a") as f:
                 f.write(f"{package_name}\n")
-            subprocess.run(["filetool.sh", "-b"], check=True)
+            subprocess.run(["filetool.sh", "-b"], check=True, timeout=30)
         else:
             log_message(f"Hata: {package_name} yüklenemedi: {result.stderr}")
-    except subprocess.CalledProcessError as e:
-        log_message(f"Yükleme hatası: {e}")
+    except Exception as e:
+        log_message(f"Yükleme hatası: {package_name}: {e}")
+
+# Python modüllerini kur
+def install_python_modules():
+    log_message("Python modülleri kontrol ediliyor...")
+    try:
+        subprocess.run(["pip3", "install", "requests"], check=True, timeout=300)
+        log_message("requests modülü yüklendi.")
+    except Exception as e:
+        log_message(f"Hata: Python modülleri yüklenemedi: {e}")
+        try:
+            subprocess.run(["tce-load", "-w", "-i", "python3.9-pip"], check=True, timeout=300)
+            subprocess.run(["pip3", "install", "requests"], check=True, timeout=300)
+            log_message("pip ve requests modülü yüklendi.")
+        except Exception as e2:
+            log_message(f"Hata: pip yüklenemedi: {e2}")
 
 # Node.js ve npm kur
 def install_node_npm():
     log_message("Node.js ve npm kontrol ediliyor...")
     try:
-        result = subprocess.run(["node", "-v"], capture_output=True, text=True)
-        npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True)
+        result = subprocess.run(["node", "-v"], capture_output=True, text=True, timeout=10)
+        npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0 and npm_result.returncode == 0:
             log_message(f"Node.js {result.stdout.strip()} ve npm {npm_result.stdout.strip()} yüklü.")
             return True
-    except:
+    except Exception:
         log_message("Node.js veya npm yüklü değil, kuruluyor...")
 
     try:
         install_tce_package("nodejs")
-        if subprocess.run(["npm", "-v"], capture_output=True).returncode != 0:
+        if subprocess.run(["npm", "-v"], capture_output=True, timeout=10).returncode != 0:
             log_message("npm eksik, manuel kurulum yapılıyor...")
             node_url = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
-            subprocess.run(["wget", node_url, "-O", "/tmp/node.tar.xz"], check=True)
-            subprocess.run(["sudo", "tar", "-xJf", "/tmp/node.tar.xz", "-C", "/usr/local"], check=True)
+            subprocess.run(["wget", node_url, "-O", "/tmp/node.tar.xz"], check=True, timeout=300)
+            subprocess.run(["sudo", "tar", "-xJf", "/tmp/node.tar.xz", "-C", "/usr/local"], check=True, timeout=300)
             subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/node", "/usr/local/bin/node"], check=True)
             subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/npm", "/usr/local/bin/npm"], check=True)
             log_message("Node.js ve npm manuel olarak yüklendi.")
         return True
-    except:
-        log_message("Hata: Node.js ve npm kurulumu başarısız!")
+    except Exception as e:
+        log_message(f"Hata: Node.js ve npm kurulumu başarısız: {e}")
         return False
 
 # EDEX-UI’yi klonla ve özelleştir
@@ -202,10 +219,10 @@ def install_and_customize_edex_ui():
     if not os.path.exists(EDEX_DIR):
         log_message("EDEX-UI klonlanıyor...")
         try:
-            subprocess.run(["git", "clone", EDEX_REPO, EDEX_DIR], check=True)
+            subprocess.run(["git", "clone", EDEX_REPO, EDEX_DIR], check=True, timeout=600)
             log_message("EDEX-UI başarıyla klonlandı.")
-        except:
-            log_message("Hata: EDEX-UI klonlama başarısız!")
+        except Exception as e:
+            log_message(f"Hata: EDEX-UI klonlama başarısız: {e}")
             return False
 
     # package.json kontrolü ve bağımlılık yükleme
@@ -215,36 +232,25 @@ def install_and_customize_edex_ui():
         return False
 
     try:
-        subprocess.run(["npm", "install"], cwd=EDEX_DIR, check=True)
+        subprocess.run(["npm", "install"], cwd=EDEX_DIR, check=True, timeout=900)
         log_message("npm bağımlılıkları yüklendi.")
-    except:
-        log_message("Hata: npm bağımlılıkları yüklenemedi!")
+    except Exception as e:
+        log_message(f"Hata: npm bağımlılıkları yüklenemedi: {e}")
         return False
 
-    # EDEX-UI özelleştirme (örneğin, isim değişikliği)
+    # EDEX-UI özelleştirme
     settings_path = os.path.join(EDEX_DIR, "settings.json")
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, "r") as f:
-                settings = json.load(f)
-            settings["shell"] = "BERKE OS Terminal"  # İsim özelleştirme
-            settings["theme"] = "tron"  # Örnek tema değişikliği
-            with open(settings_path, "w") as f:
-                json.dump(settings, f, indent=2)
-            log_message("EDEX-UI ayarları özelleştirildi.")
-        except:
-            log_message("Hata: EDEX-UI ayarları özelleştirilemedi!")
-
-    # Dosya yönetim modülü için yapılandırma
     try:
-        fs_module_path = os.path.join(EDEX_DIR, "src", "components", "filesystem")
-        if os.path.exists(fs_module_path):
-            log_message("Dosya yönetim modülü tespit edildi.")
-        else:
-            log_message("Uyarı: Dosya yönetim modülü eksik, EDEX-UI yeniden klonlanabilir.")
-    except:
-        log_message("Hata: Dosya yönetim modülü kontrolü başarısız!")
-        return False
+        settings = {"shell": "BERKE OS Terminal", "theme": "tron"}
+        if os.path.exists(settings_path):
+            with open(settings_path, "r") as f:
+                existing = json.load(f)
+                settings.update(existing)
+        with open(settings_path, "w") as f:
+            json.dump(settings, f, indent=2)
+        log_message("EDEX-UI ayarları özelleştirildi.")
+    except Exception as e:
+        log_message(f"Hata: EDEX-UI ayarları özelleştirilemedi: {e}")
 
     return True
 
@@ -252,7 +258,7 @@ def install_and_customize_edex_ui():
 def check_js_file(file_path):
     log_message(f"JavaScript dosyası kontrol ediliyor: {file_path}")
     try:
-        result = subprocess.run(["node", "-c", file_path], capture_output=True, text=True)
+        result = subprocess.run(["node", "-c", file_path], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             log_message(f"{file_path} sözdizimi doğru.")
             return True
@@ -272,10 +278,13 @@ def check_js_file(file_path):
 
 # Yedek oluştur
 def create_backup(file_path):
-    backup_path = os.path.join(BACKUP_DIR, os.path.relpath(file_path, ROOT_DIR))
-    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
-    shutil.copy(file_path, backup_path)
-    log_message(f"Yedek oluşturuldu: {backup_path}")
+    try:
+        backup_path = os.path.join(BACKUP_DIR, os.path.relpath(file_path, ROOT_DIR))
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        shutil.copy(file_path, backup_path)
+        log_message(f"Yedek oluşturuldu: {backup_path}")
+    except Exception as e:
+        log_message(f"Hata: Yedek oluşturulamadı: {e}")
 
 # Terminal tabanlı web tarayıcı
 def web_search(stdscr):
@@ -287,20 +296,23 @@ def web_search(stdscr):
     if query.lower() == "q":
         return
 
-    # Google araması (basit bir API yerine doğrudan w3m ile)
     page = 1
     while True:
         display_status(stdscr, f"Arama yapılıyor: {query} (Sayfa {page})...")
         try:
-            # Google arama URL’si (basit scraping)
             url = f"https://www.google.com/search?q={quote(query)}&start={(page-1)*10}"
-            result = subprocess.run(["w3m", "-dump", url], capture_output=True, text=True)
+            result = subprocess.run(["w3m", "-dump", url], capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                log_message(f"Hata: w3m arama başarısız: {result.stderr}")
+                display_status(stdscr, "Hata: Arama başarısız!")
+                time.sleep(5)
+                break
             lines = result.stdout.splitlines()
             results = []
             for line in lines:
                 if line.startswith("  ") and "http" in line:
                     results.append(line.strip())
-            results = results[:7]  # İlk 7 sonuç
+            results = results[:7]
 
             stdscr.clear()
             stdscr.addstr(0, 0, f"Sonuçlar: {query} (Sayfa {page})")
@@ -317,19 +329,19 @@ def web_search(stdscr):
                     idx = int(cmd.split(":")[1]) - 1
                     if 0 <= idx < len(results):
                         url = results[idx].split()[-1]
-                        subprocess.run(["w3m", url])
+                        subprocess.run(["w3m", url], timeout=60)
                     else:
                         stdscr.addstr(9, 0, "Geçersiz sıra numarası!")
                         stdscr.refresh()
                         time.sleep(2)
-                except:
-                    stdscr.addstr(9, 0, "Hata: Geçersiz komut!")
+                except Exception as e:
+                    stdscr.addstr(9, 0, f"Hata: Geçersiz komut: {e}")
                     stdscr.refresh()
                     time.sleep(2)
             elif cmd.lower() == "q":
                 break
-        except:
-            log_message("Hata: Arama başarısız!")
+        except Exception as e:
+            log_message(f"Hata: Arama başarısız: {e}")
             display_status(stdscr, "Hata: Arama başarısız!")
             time.sleep(5)
             break
@@ -341,21 +353,27 @@ def start_edex_ui():
         subprocess.Popen(["npm", "start"], cwd=EDEX_DIR)
         log_message("EDEX-UI başarıyla başlatıldı.")
         return True
-    except:
-        log_message("Hata: EDEX-UI başlatılamadı!")
+    except Exception as e:
+        log_message(f"Hata: EDEX-UI başlatılamadı: {e}")
         return False
 
 # Konfigürasyon dosyasını oku/yaz
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f)
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        log_message(f"Hata: Konfigürasyon yüklenemedi: {e}")
     return {"default_edex": False}
 
 def save_config(config):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
-    subprocess.run(["filetool.sh", "-b"], check=True)
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+        subprocess.run(["filetool.sh", "-b"], check=True, timeout=30)
+    except Exception as e:
+        log_message(f"Hata: Konfigürasyon kaydedilemedi: {e}")
 
 # Ana arayüz
 def main_menu(stdscr):
@@ -396,15 +414,22 @@ def display_status(stdscr, status):
 ██║░╚██╗╚█████╔╝██║░╚███║░░░██║░░░██║░░██║╚█████╔╝███████╗
 ╚═╝░░╚═╝░╚════╝░╚═╝░░╚══╝░░░╚═╝░░░╚═╝░░╚═╝░╚════╝░╚══════╝
     """
-    for i, line in enumerate(ascii_art.split("\n")):
-        stdscr.addstr(i, 0, line)
-    stdscr.addstr(len(ascii_art.split("\n")) + 1, 0, f"Durum: {status}")
-    stdscr.refresh()
+    try:
+        for i, line in enumerate(ascii_art.split("\n")):
+            stdscr.addstr(i, 0, line)
+        stdscr.addstr(len(ascii_art.split("\n")) + 1, 0, f"Durum: {status}")
+        stdscr.refresh()
+    except Exception as e:
+        log_message(f"Hata: Ekran güncelleme başarısız: {e}")
 
 def main(stdscr):
     # Curses ayarları
-    curses.curs_set(0)
-    display_status(stdscr, "Başlatılıyor...")
+    try:
+        curses.curs_set(0)
+        display_status(stdscr, "Başlatılıyor...")
+    except Exception as e:
+        log_message(f"Hata: Curses başlatılamadı: {e}")
+        return
 
     # Konfigürasyon kontrolü
     config = load_config()
@@ -433,6 +458,10 @@ def main(stdscr):
     for package in REQUIRED_TCE_PACKAGES:
         install_tce_package(package)
 
+    # Python modüllerini yükle
+    display_status(stdscr, "Python modülleri yükleniyor...")
+    install_python_modules()
+
     # Node.js ve npm kur
     display_status(stdscr, "Node.js ve npm yükleniyor...")
     if not install_node_npm():
@@ -450,23 +479,30 @@ def main(stdscr):
     # JavaScript dosyalarını tara ve kontrol et
     display_status(stdscr, "JavaScript dosyaları kontrol ediliyor...")
     js_files = []
-    for dirpath, _, filenames in os.walk(EDEX_DIR):
-        for filename in filenames:
-            if filename.endswith(".js"):
-                js_files.append(os.path.join(dirpath, filename))
-    for js_file in js_files:
-        create_backup(js_file)
-        if not check_js_file(js_file):
-            log_message(f"Uyarı: {js_file} hatalı, yedekten geri yüklendi veya düzeltilemedi!")
-            display_status(stdscr, f"Uyarı: {os.path.basename(js_file)} hatalı!")
+    try:
+        for dirpath, _, filenames in os.walk(EDEX_DIR):
+            for filename in filenames:
+                if filename.endswith(".js"):
+                    js_files.append(os.path.join(dirpath, filename))
+        for js_file in js_files:
+            create_backup(js_file)
+            if not check_js_file(js_file):
+                log_message(f"Uyarı: {js_file} hatalı!")
+                display_status(stdscr, f"Uyarı: {os.path.basename(js_file)} hatalı!")
+                time.sleep(2)
+    except Exception as e:
+        log_message(f"Hata: JavaScript dosyaları kontrol edilemedi: {e}")
 
     # Varsayılan EDEX-UI sorusu
     stdscr.clear()
     stdscr.addstr(0, 0, "EDEX-UI her başlangıçta varsayılan olarak başlatılsın mı? (e/h)")
     stdscr.refresh()
-    choice = stdscr.getch()
-    config["default_edex"] = choice == ord("e")
-    save_config(config)
+    try:
+        choice = stdscr.getch()
+        config["default_edex"] = choice == ord("e")
+        save_config(config)
+    except Exception as e:
+        log_message(f"Hata: Varsayılan seçim alınamadı: {e}")
 
     # Ana menü
     while True:
@@ -490,4 +526,8 @@ def main(stdscr):
             break
 
 if __name__ == "__main__":
-    curses.wrapper(main)
+    try:
+        curses.wrapper(main)
+    except Exception as e:
+        log_message(f"Hata: Ana program çöktü: {e}")
+        print(f"Hata: {e}")
