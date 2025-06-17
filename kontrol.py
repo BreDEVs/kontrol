@@ -7,7 +7,6 @@ import hashlib
 import shutil
 import signal
 import json
-import pwd
 import logging
 import logging.handlers
 from typing import List, Tuple, Optional
@@ -24,6 +23,7 @@ LOG_DIR = Path("/var/log/berke")
 LOG_FILE = LOG_DIR / "install.log"
 EDEX_DIR = APP_DIR / "edex-ui"
 NODE_VERSION = "16.20.2"
+NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
 EDEX_URL = "https://github.com/GitSquared/edex-ui.git"
 BOOT_SCRIPT = Path("/opt/bootlocal.sh")
 REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "libX11", "libxss", "libX", "fontconfig", "X11", "git", "wget", "xml", "curl", "tar"]
@@ -195,22 +195,21 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
 
         for i, (stage_name, status) in enumerate(stages):
             stage_text = f"{i+1}. {stage_name} [{status}]"
-            stage_x = (cols - len(stage_text)) // 2
+            stage_x = box_x + 2
             row = box_y + 5 + i
             if row >= box_y + box_height - 3:
                 break
             if i == current_stage and status == "/":
                 stdscr.attron(curses.color_pair(4))
                 anim_chars = ["/", "-", "\\", "|"]
-                for j in range(10):
+                for j in range(4):
                     stage_text = f"{i+1}. {stage_name} [{anim_chars[j % 4]}]"
-                    stage_x = (cols - len(stage_text)) // 2
                     stdscr.addstr(row, stage_x, stage_text, curses.A_BOLD)
                     sub_status_text = f"Status: {sub_status[:box_width-10]}" if sub_status else ""
-                    sub_status_x = (cols - len(sub_status_text)) // 2
+                    sub_status_x = box_x + 2
                     stdscr.addstr(row + 1, sub_status_x, sub_status_text, curses.A_BOLD)
                     stdscr.refresh()
-                    time.sleep(0.2)
+                    time.sleep(0.1)
                 stdscr.attroff(curses.color_pair(4))
             elif status == "DONE":
                 stdscr.attron(curses.color_pair(3))
@@ -223,7 +222,7 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
 
         if sub_status and stages[current_stage][1] == "DONE":
             sub_status_text = f"Status: {sub_status[:box_width-10]}"
-            sub_status_x = (cols - len(sub_status_text)) // 2
+            sub_status_x = box_x + 2
             stdscr.attron(curses.color_pair(4))
             stdscr.addstr(box_y + 5 + current_stage + 1, sub_status_x, sub_status_text, curses.A_BOLD)
             stdscr.attroff(curses.color_pair(4))
@@ -242,6 +241,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         clean_temp()
         
         for cmd in REQUIRED_COMMANDS:
+            sub_status = f"Checking {cmd}"
+            update_display(stdscr, stages, current_stage, sub_status, logger)
             try:
                 result = subprocess.run(["which", cmd], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if cmd == "python3.9":
@@ -272,6 +273,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         for pkg in REQUIRED_TCE_PACKAGES:
             if pkg in REQUIRED_COMMANDS:
                 continue
+            sub_status = f"Checking {pkg}"
+            update_display(stdscr, stages, current_stage, sub_status, logger)
             try:
                 result = subprocess.run(["tce-status", "-i"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                 if pkg in result.stdout:
@@ -286,7 +289,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         log_message(f"{pkg} installed", logger)
                         if pkg == "Xorg-7.7":
                             if not Path("/usr/local/lib/X11").exists():
-                                log_message("Xorg-7.7 installed but X11 directory not found, attempting fallback", logger)
+                                log_message("Xorg-7.7 installed but X11 directory not found, using vesa driver", logger)
                                 xorg_conf_dir = Path("/etc/X11/xorg.conf.d")
                                 xorg_conf = xorg_conf_dir / "20-xorg-vesa.conf"
                                 xorg_conf_dir.mkdir(parents=True, exist_ok=True)
@@ -344,6 +347,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     log_message(f"onboot.lst update failed: {e}", logger)
                     raise Exception(f"onboot.lst update failed: {e}")
 
+        sub_status = "Checking Node.js"
+        update_display(stdscr, stages, current_stage, sub_status, logger)
         try:
             result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
             npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
@@ -355,18 +360,21 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
             update_display(stdscr, stages, current_stage, sub_status, logger)
             for attempt in range(RETRY_ATTEMPTS):
                 try:
-                    node_url = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
                     node_tar = Path("/tmp/node.tar.xz")
-                    subprocess.run(["sudo", "wget", "-O", str(node_tar), node_url], check=True, timeout=300, capture_output=True)
+                    subprocess.run(["sudo", "wget", "-O", str(node_tar), NODE_URL], check=True, timeout=300, capture_output=True)
                     if not node_tar.exists():
                         raise Exception("Node.js archive download failed")
+                    node_extract_dir = Path(f"/usr/local/node-v{NODE_VERSION}-linux-x64")
+                    if node_extract_dir.exists():
+                        shutil.rmtree(node_extract_dir, ignore_errors=True)
                     subprocess.run(["sudo", "tar", "-xJf", str(node_tar), "-C", "/usr/local"], check=True, timeout=300)
-                    subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/node", "/usr/local/bin/node"], check=True, timeout=TIMEOUT_SECONDS)
-                    subprocess.run(["sudo", "ln", "-sf", f"/usr/local/node-v{NODE_VERSION}-linux-x64/bin/npm", "/usr/local/bin/npm"], check=True, timeout=TIMEOUT_SECONDS)
+                    subprocess.run(["sudo", "ln", "-sf", str(node_extract_dir / "bin/node"), "/usr/local/bin/node"], check=True, timeout=TIMEOUT_SECONDS)
+                    subprocess.run(["sudo", "ln", "-sf", str(node_extract_dir / "bin/npm"), "/usr/local/bin/npm"], check=True, timeout=TIMEOUT_SECONDS)
                     result = subprocess.run(["node", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                    npm_result = subprocess.run(["npm", "-v"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
                     if f"v{NODE_VERSION}" not in result.stdout:
                         raise Exception("Node.js version verification failed")
-                    log_message("Node.js and npm installed", logger)
+                    log_message(f"Node.js {result.stdout.strip()} and npm {npm_result.stdout.strip()} installed", logger)
                     break
                 except Exception as e:
                     if attempt == RETRY_ATTEMPTS - 1:
@@ -380,7 +388,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
         stages[current_stage] = (stages[current_stage][0], "DONE")
         sub_status = "Dependencies completed"
         update_display(stdscr, stages, current_stage, sub_status, logger)
-        time.sleep(5)
+        time.sleep(1)
     except Exception as e:
         log_message(f"Dependency stage failed: {e}", logger)
         display_error(stdscr, stages[current_stage][0], str(e), logger)
@@ -585,7 +593,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         update_display(stdscr, stages, current_stage, sub_status, logger)
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                subprocess.run(["sudo", "npm", "install", "--unsafe-perm"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True)
+                subprocess.run(["sudo", "npm", "install", "--unsafe-perm", "--no-audit"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True)
                 if not (EDEX_DIR / "node_modules").exists():
                     raise Exception("npm dependencies verification failed")
                 log_message("npm dependencies installed", logger)
@@ -684,8 +692,10 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
                 os.environ["DISPLAY"] = ":0"
                 result = subprocess.run(["pgrep", "-x", "Xorg"], capture_output=True, check=False, timeout=TIMEOUT_SECONDS)
                 if result.returncode != 0:
-                    subprocess.run(["sudo", "Xorg", "-quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                    xorg_process = subprocess.Popen(["sudo", "Xorg", ":0", "-quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
                     time.sleep(3)
+                    if xorg_process.poll() is not None:
+                        raise Exception("Xorg failed to start")
                     result = subprocess.run(["pgrep", "-x", "Xorg"], capture_output=True, check=True, timeout=TIMEOUT_SECONDS)
                 log_message("X11 environment prepared", logger)
                 break
@@ -697,27 +707,31 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
 
         sub_status = "Launching EDEX-UI"
         update_display(stdscr, stages, current_stage, sub_status, logger)
-        try:
-            process = subprocess.Popen(
-                ["sudo", "npm", "start", "--unsafe-perm"],
-                cwd=str(EDEX_DIR),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                preexec_fn=os.setsid
-            )
-            time.sleep(15)
-            if process.poll() is not None:
-                stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
-                log_message(f"EDEX-UI startup failed: {stderr}", logger)
-                raise Exception(f"EDEX-UI startup failed: {stderr}")
-            result = subprocess.run(["ps", "aux"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
-            if "node" not in result.stdout or "edex-ui" not in result.stdout:
-                raise Exception("EDEX-UI process verification failed")
-            log_message("EDEX-UI started", logger)
-        except Exception as e:
-            log_message(f"EDEX-UI startup failed: {e}", logger)
-            raise Exception(f"EDEX-UI startup failed: {e}")
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                process = subprocess.Popen(
+                    ["sudo", "npm", "start", "--unsafe-perm"],
+                    cwd=str(EDEX_DIR),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    preexec_fn=os.setsid
+                )
+                time.sleep(15)
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
+                    log_message(f"EDEX-UI startup failed: {stderr}", logger)
+                    raise Exception(f"EDEX-UI startup failed: {stderr}")
+                result = subprocess.run(["ps", "aux"], capture_output=True, text=True, check=True, timeout=TIMEOUT_SECONDS)
+                if "node" not in result.stdout or "edex-ui" not in result.stdout:
+                    raise Exception("EDEX-UI process verification failed")
+                log_message("EDEX-UI started", logger)
+                break
+            except Exception as e:
+                if attempt == RETRY_ATTEMPTS - 1:
+                    log_message(f"EDEX-UI startup failed: {e}", logger)
+                    raise Exception(f"EDEX-UI startup failed: {e}")
+                time.sleep(2)
 
         stages[current_stage] = (stages[current_stage][0], "DONE")
         sub_status = "EDEX-UI started"
@@ -795,7 +809,7 @@ def main(stdscr):
     try:
         subprocess.run(["resize"], capture_output=True, timeout=TIMEOUT_SECONDS)
         curses.curs_set(0)
-        stdscr.timeout(-1)
+        stdscr.timeout(100)
         rows, cols = stdscr.getmaxyx()
         if rows < MIN_TERM_SIZE[0] or cols < MIN_TERM_SIZE[1]:
             raise Exception(f"Terminal size too small (min {MIN_TERM_SIZE[1]}x{MIN_TERM_SIZE[0]})")
@@ -858,6 +872,9 @@ def main(stdscr):
     for i, func in enumerate(functions):
         try:
             func(stdscr, stages, i, logger)
+            stages[i] = (stages[i][0], "DONE")
+            if i + 1 < len(stages):
+                stages[i + 1] = (stages[i + 1][0], "/")
         except Exception as e:
             log_message(f"Stage failed: {stages[i][0]}: {e}", logger)
             display_error(stdscr, stages[i][0], str(e), logger)
