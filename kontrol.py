@@ -25,10 +25,13 @@ LOG_FILE = LOG_DIR / "install.log"
 REPORT_FILE = LOG_DIR / "setup_report.txt"
 EDEX_DIR: Optional[Path] = None
 NODE_VERSION = "16.20.2"
-NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
+NODE_URLS = [
+    f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz",
+    f"https://nodejs.org/download/release/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
+]
 NODE_CHECKSUM = "4f34f7f2e66ca676b9c831f6fb3b6c5b0c1f687a6e5f2f51dceda28e6b0a1ca8"
 EDEX_URL = "https://github.com/GitSquared/edex-ui.git"
-REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "git", "wget", "curl", "tar", "coreutils", "util-linux", "busybox"]
+REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "git", "wget", "curl", "tar", "coreutils", "util-linux", "busybox", "tce"]
 REQUIRED_COMMANDS = ["python3.9", "wget", "curl", "git", "tar", "tce-load", "mount", "tce-status", "blkid", "busybox"]
 MIN_TERM_SIZE = (20, 50)
 RETRY_ATTEMPTS = 3
@@ -41,7 +44,8 @@ SUPPORTED_FILESYSTEMS = ["ext4", "vfat", "ext3", "ntfs", "fat32", "exfat", "btrf
 MIRROR_URLS = [
     "http://repo.tinycorelinux.net/",
     "http://mirror1.tinycorelinux.net/",
-    "http://mirror2.tinycorelinux.net/"
+    "http://mirror2.tinycorelinux.net/",
+    "http://distro.ibiblio.org/tinycorelinux/"
 ]
 
 # Environment setup
@@ -123,23 +127,31 @@ def display_error(stdscr, stage: str, error_msg: str, logger: Optional[logging.L
     """Display error message in curses or terminal."""
     specific_suggestions = {
         "DEPENDENCIES": (
-            "Ensure internet connection and tce-load. "
-            "Try: 'sudo tce-load -wi <package>' (e.g., coreutils, util-linux, busybox). "
-            "Verify: 'which mount blkid tce-load tce-status busybox'. "
-            "Check mirror: 'cat /opt/tcemirror'."
+            "Ensure internet connection: 'ping 8.8.8.8'. "
+            "Try: 'sudo tce-load -wi <package>' (e.g., coreutils, util-linux, busybox, Xorg-7.7). "
+            "Verify: 'which mount blkid tce-load tce-status busybox wget tar Xorg node npm'. "
+            "Check mirror: 'cat /opt/tcemirror'. "
+            "Set mirror: 'echo \"http://repo.tinycorelinux.net/\" | sudo tee /opt/tcemirror'."
         ),
         "DISK SETUP": (
             "Verify disk connection and format (ext4/vfat/ext3/ntfs/fat32/exfat/btrfs). "
-            "Check: 'cat /proc/partitions', 'ls /dev/sd* /dev/nvme* /dev/mmcblk*'. "
+            "Check: 'cat /proc/partitions', 'ls /dev/sd* /dev/nvme* /dev/mmcblk*', 'blkid'. "
             "Mount manually: 'sudo mount /dev/sda1 /mnt/disk'. "
             "Install util-linux: 'sudo tce-load -wi util-linux'."
         ),
-        "eDEX-UI DOWNLOAD": "Ensure GitHub access and git: 'sudo tce-load -wi git'.",
-        "eDEX-UI INSTALL": "Verify Node.js: 'node -v'. Install npm dependencies: 'cd /mnt/disk/apps/edex-ui && npm install'.",
+        "eDEX-UI DOWNLOAD": (
+            "Ensure GitHub access and git: 'sudo tce-load -wi git'. "
+            "Check internet: 'ping 8.8.8.8'."
+        ),
+        "eDEX-UI INSTALL": (
+            "Verify Node.js: 'node -v', 'npm -v'. "
+            "Install npm dependencies: 'cd /mnt/disk/apps/edex-ui && npm install'. "
+            "Check disk space: 'df -h /mnt/disk'."
+        ),
         "eDEX-UI START": (
             "Check Xorg: 'sudo tce-load -wi Xorg-7.7'. "
-            "Verify: 'echo $DISPLAY'. "
-            "Check Node.js: 'which node npm'. "
+            "Verify: 'echo $DISPLAY', 'which Xorg'. "
+            "Check Node.js: 'which node npm', 'node -v'. "
             "Start manually: 'cd /mnt/disk/apps/edex-ui && npm start'."
         )
     }
@@ -213,13 +225,19 @@ def fix_permissions(path: Path, logger: Optional[logging.Logger] = None) -> None
         while parent != parent.parent:
             if parent.exists() and not os.access(parent, os.W_OK):
                 os.chmod(parent, 0o775)
-                os.chown(parent, os.getuid(), os.getgid())
+                try:
+                    os.chown(parent, os.getuid(), os.getgid())
+                except Exception as e:
+                    log_message(f"Chown failed for {parent}: {e}", logger, "warning")
                 log_message(f"Permissions fixed for parent {parent}", logger)
             parent = parent.parent
         if path.exists():
             if not os.access(path, os.W_OK):
                 os.chmod(path, 0o775 if path.is_dir() else 0o664)
-                os.chown(path, os.getuid(), os.getgid())
+                try:
+                    os.chown(path, os.getuid(), os.getgid())
+                except Exception as e:
+                    log_message(f"Chown failed for {path}: {e}", logger, "warning")
                 log_message(f"Permissions fixed for {path}", logger)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,7 +262,7 @@ def configure_tce_mirror(logger: Optional[logging.Logger]) -> None:
                 return
             except Exception as e:
                 log_message(f"Mirror {mirror} failed: {e}", logger, "warning")
-        raise Exception("No working TCE mirror found. Check internet connection.")
+        raise Exception("No working TCE mirror found. Check internet: 'ping 8.8.8.8'. Set manually: 'echo \"http://repo.tinycorelinux.net/\" | sudo tee /opt/tcemirror'")
     except Exception as e:
         log_message(f"TCE mirror configuration failed: {e}", logger, "error")
         raise
@@ -282,7 +300,7 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
                 pass
             raise Exception(
                 f"No suitable disk found. Available devices: {disk_list}. "
-                "Ensure a disk is connected (USB, SATA, NVMe, SD card)."
+                "Ensure a disk is connected (USB, SATA, NVMe, SD card). Check: 'ls /dev/sd* /dev/nvme* /dev/mmcblk*'"
             )
 
         log_message(f"Detected disks: {', '.join(available_disks)}", logger)
@@ -366,7 +384,8 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
         for info in disk_info:
             error_msg += f"  {info['device']}: FS={info['fstype']}, Size={info['size']}\n"
         error_msg += (
-            "Try: 'cat /proc/partitions', 'ls /dev/sd* /dev/nvme* /dev/mmcblk*', or manual mount: 'sudo mount /dev/sda1 /mnt/disk'"
+            "Try: 'cat /proc/partitions', 'ls /dev/sd* /dev/nvme* /dev/mmcblk*', 'blkid'. "
+            "Mount manually: 'sudo mount /dev/sda1 /mnt/disk'"
         )
         log_message(f"Disk detection failed: {error_msg}", logger, "error")
         if stdscr is None:
@@ -405,7 +424,9 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
 def check_internet(logger: Optional[logging.Logger]) -> bool:
     """Verify internet connectivity."""
     try:
+        # Test DNS and HTTP
         socket.create_connection(("8.8.8.8", 53), timeout=5)
+        socket.create_connection(("1.1.1.1", 53), timeout=5)
         urllib.request.urlopen("https://www.google.com", timeout=5)
         log_message("Internet connection established", logger)
         return True
@@ -423,8 +444,20 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
     try:
         clean_temp(logger)
         if not check_internet(logger):
-            raise Exception("No internet connection. Connect to a network and try again.")
+            raise Exception("No internet connection. Check: 'ping 8.8.8.8'. Connect to a network and try again.")
         configure_tce_mirror(logger)
+        # Ensure tce is installed first
+        tce_load_cmd = shutil.which("tce-load")
+        if not tce_load_cmd:
+            sub_status = "Installing tce..."
+            if stdscr:
+                update_display(stdscr, stages, current_stage, sub_status, logger)
+            try:
+                result = subprocess.run(["/usr/bin/tce-load", "-w", "-i", "tce"], check=True, timeout=300, capture_output=True, text=True)
+                log_message(f"tce installed: {result.stdout}", logger)
+                print(f"[{SYSTEM_NAME}] tce installed")
+            except subprocess.CalledProcessError as e:
+                raise Exception(f"tce installation failed: {e.stderr}. Try: 'sudo tce-load -wi tce'")
         for cmd in REQUIRED_COMMANDS:
             sub_status = f"Checking {cmd}..."
             if stdscr:
@@ -442,8 +475,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     raise Exception("tce-load not found. Install tce: 'sudo tce-load -wi tce'")
                 for attempt in range(RETRY_ATTEMPTS):
                     try:
-                        subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300, capture_output=True, text=True)
-                        log_message(f"{pkg} installed for {cmd}", logger)
+                        result = subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300, capture_output=True, text=True)
+                        log_message(f"{pkg} installed for {cmd}: {result.stdout}", logger)
                         print(f"[{SYSTEM_NAME}] {pkg} installed for {cmd}")
                         cmd_path = shutil.which(cmd)
                         if not cmd_path:
@@ -451,8 +484,9 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                         break
                     except subprocess.CalledProcessError as e:
                         if attempt == RETRY_ATTEMPTS - 1:
-                            suggestion = f"Install {cmd}: 'sudo tce-load -wi {pkg}'"
+                            suggestion = f"Install {cmd}: 'sudo tce-load -wi {pkg}'. Check mirror: 'cat /opt/tcemirror'"
                             raise Exception(f"Required command {cmd} not found. {suggestion}. Error: {e.stderr}")
+                        log_message(f"Retrying {pkg} installation (attempt {attempt+2}/{RETRY_ATTEMPTS})", logger)
                         time.sleep(2)
             log_message(f"{cmd} found: {cmd_path}", logger)
             print(f"[{SYSTEM_NAME}] {cmd} found: {cmd_path}")
@@ -470,13 +504,14 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                     raise Exception("tce-load not found. Install tce: 'sudo tce-load -wi tce'")
                 for attempt in range(RETRY_ATTEMPTS):
                     try:
-                        subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300, capture_output=True, text=True)
-                        log_message(f"{pkg} installed", logger)
+                        result = subprocess.run([tce_load_cmd, "-w", "-i", pkg], check=True, timeout=300, capture_output=True, text=True)
+                        log_message(f"{pkg} installed: {result.stdout}", logger)
                         print(f"[{SYSTEM_NAME}] {pkg} installed")
                         break
                     except subprocess.CalledProcessError as e:
                         if attempt == RETRY_ATTEMPTS - 1:
                             raise Exception(f"Failed to install {pkg} after {RETRY_ATTEMPTS} attempts: {e.stderr}. Try: 'sudo tce-load -wi {pkg}'")
+                        log_message(f"Retrying {pkg} installation (attempt {attempt+2}/{RETRY_ATTEMPTS})", logger)
                         time.sleep(2)
             fix_permissions(TCE_DIR, logger)
         sub_status = "Installing Node.js..."
@@ -488,23 +523,45 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
             target_dir = Path("/usr/local/node")
             wget_cmd = shutil.which("wget")
             if not wget_cmd:
-                raise Exception("wget not found. Install wget: 'sudo tce-load -wi wget'")
-            for attempt in range(RETRY_ATTEMPTS):
-                try:
-                    subprocess.run([wget_cmd, "-O", str(node_tar), NODE_URL], check=True, timeout=300, capture_output=True, text=True)
-                    with open(node_tar, "rb") as f:
-                        if hashlib.sha256(f.read()).hexdigest() != NODE_CHECKSUM:
-                            raise Exception("Node.js checksum mismatch")
+                tce_load_cmd = shutil.which("tce-load")
+                if not tce_load_cmd:
+                    raise Exception("tce-load not found. Install tce: 'sudo tce-load -wi tce'")
+                subprocess.run([tce_load_cmd, "-w", "-i", "wget"], check=True, timeout=300, capture_output=True, text=True)
+                wget_cmd = shutil.which("wget")
+                if not wget_cmd:
+                    raise Exception("wget not found after installation. Try: 'sudo tce-load -wi wget'")
+            for url in NODE_URLS:
+                for attempt in range(RETRY_ATTEMPTS):
+                    try:
+                        result = subprocess.run([wget_cmd, "-O", str(node_tar), url], check=True, timeout=300, capture_output=True, text=True)
+                        log_message(f"Node.js downloaded from {url}: {result.stdout}", logger)
+                        with open(node_tar, "rb") as f:
+                            if hashlib.sha256(f.read()).hexdigest() != NODE_CHECKSUM:
+                                log_message("Node.js checksum mismatch, trying next URL", logger, "warning")
+                                continue
+                        break
+                    except subprocess.CalledProcessError as e:
+                        if attempt == RETRY_ATTEMPTS - 1:
+                            log_message(f"Node.js download failed from {url}: {e.stderr}", logger, "warning")
+                            continue
+                        log_message(f"Retrying Node.js download from {url} (attempt {attempt+2}/{RETRY_ATTEMPTS})", logger)
+                        time.sleep(2)
+                if node_tar.exists():
                     break
-                except subprocess.CalledProcessError as e:
-                    if attempt == RETRY_ATTEMPTS - 1:
-                        raise Exception(f"Node.js download failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
-                    time.sleep(2)
+            if not node_tar.exists():
+                raise Exception(f"Node.js download failed from all URLs after {RETRY_ATTEMPTS} attempts")
             target_dir.mkdir(parents=True, exist_ok=True)
             tar_cmd = shutil.which("tar")
             if not tar_cmd:
-                raise Exception("tar not found. Install tar: 'sudo tce-load -wi tar'")
-            subprocess.run([tar_cmd, "-xJf", str(node_tar), "-C", str(target_dir), "--strip-components=1"], check=True, timeout=300)
+                tce_load_cmd = shutil.which("tce-load")
+                if not tce_load_cmd:
+                    raise Exception("tce-load not found. Install tce: 'sudo tce-load -wi tce'")
+                subprocess.run([tce_load_cmd, "-w", "-i", "tar"], check=True, timeout=300, capture_output=True, text=True)
+                tar_cmd = shutil.which("tar")
+                if not tar_cmd:
+                    raise Exception("tar not found after installation. Try: 'sudo tce-load -wi tar'")
+            result = subprocess.run([tar_cmd, "-xJf", str(node_tar), "-C", str(target_dir), "--strip-components=1"], check=True, timeout=300, capture_output=True, text=True)
+            log_message(f"Node.js extracted: {result.stdout}", logger)
             for binary in ["node", "npm"]:
                 binary_path = target_dir / "bin" / binary
                 link_path = Path(f"/usr/local/bin/{binary}")
@@ -564,7 +621,7 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
     try:
         clean_temp(logger)
         if not check_internet(logger):
-            raise Exception("No internet connection. Connect to a network and try again.")
+            raise Exception("No internet connection. Check: 'ping 8.8.8.8'. Connect to a network and try again.")
         sub_status = "Cloning eDEX-UI..."
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
@@ -575,11 +632,13 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
             raise Exception("git command not found. Install git: 'sudo tce-load -wi git'")
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                subprocess.run([git_cmd, "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600, capture_output=True, text=True)
+                result = subprocess.run([git_cmd, "clone", "--depth", "1", EDEX_URL, str(EDEX_DIR)], check=True, timeout=600, capture_output=True, text=True)
+                log_message(f"eDEX-UI cloned: {result.stdout}", logger)
                 break
             except subprocess.CalledProcessError as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"eDEX-UI clone failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
+                log_message(f"Retrying eDEX-UI clone (attempt {attempt+2}/{RETRY_ATTEMPTS})", logger)
                 time.sleep(2)
         fix_permissions(EDEX_DIR, logger)
         if not (EDEX_DIR / "package.json").exists():
@@ -611,11 +670,13 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         env["PATH"] = f"/usr/local/node/bin:{env['PATH']}"
         for attempt in range(RETRY_ATTEMPTS):
             try:
-                subprocess.run([npm_cmd, "install"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True, text=True, env=env)
+                result = subprocess.run([npm_cmd, "install"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True, text=True, env=env)
+                log_message(f"eDEX-UI npm dependencies installed: {result.stdout}", logger)
                 break
             except subprocess.CalledProcessError as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"npm install failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
+                log_message(f"Retrying npm install (attempt {attempt+2}/{RETRY_ATTEMPTS})", logger)
                 time.sleep(2)
         fix_permissions(EDEX_DIR / "node_modules", logger)
         sub_status = "Configuring eDEX-UI..."
