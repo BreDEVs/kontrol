@@ -28,8 +28,8 @@ NODE_VERSION = "16.20.2"
 NODE_URL = f"https://nodejs.org/dist/v{NODE_VERSION}/node-v{NODE_VERSION}-linux-x64.tar.xz"
 NODE_CHECKSUM = "4f34f7f2e66ca676b9c831f6fb3b6c5b0c1f687a6e5f2f51dceda28e6b0a1ca8"
 EDEX_URL = "https://github.com/GitSquared/edex-ui.git"
-REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "git", "wget", "curl", "tar", "coreutils"]
-REQUIRED_COMMANDS = ["python3.9", "wget", "curl", "git", "tar", "tce-load", "mount", "tce-status"]
+REQUIRED_TCE_PACKAGES = ["python3.9", "Xorg-7.7", "git", "wget", "curl", "tar", "coreutils", "util-linux"]
+REQUIRED_COMMANDS = ["python3.9", "wget", "curl", "git", "tar", "tce-load", "mount", "tce-status", "blkid"]
 MIN_TERM_SIZE = (20, 50)
 RETRY_ATTEMPTS = 3
 TIMEOUT_SECONDS = 10
@@ -122,7 +122,7 @@ def display_error(stdscr, stage: str, error_msg: str, logger: Optional[logging.L
         ),
         "eDEX-UI DOWNLOAD": "Ensure GitHub is accessible and git is installed: 'sudo tce-load -wi git'.",
         "eDEX-UI INSTALL": "Verify Node.js and npm are installed correctly. Check node version: 'node -v'.",
-        "eDEX-UI START": "Check Xorg installation ('sudo tce-load -wi Xorg-7.7') and display settings ('echo $DISPLAY'). Ensure Node.js is in PATH."
+        "eDEX-UI START": "Check Xorg installation ('sudo tce-load -wi Xorg') and display settings ('echo $DISPLAY'). Ensure Node.js is in PATH."
     }
     suggestion = suggestion or specific_suggestions.get(stage, "Check logs for details.")
     error_summary = f"""
@@ -140,17 +140,16 @@ Report: github.com/BreDEVs/kontrol/issues
             stdscr.clear()
             rows, cols = stdscr.getmaxyx()
             lines = [
-                ("BERKE OS - ERROR!", curses.A_BOLD | curses.color_pair(1), 2),
-                (f"Stage: {stage}", curses.color_pair(4), 4),
-                (f"Error: {error_msg}", curses.color_pair(4), 6),
-                (f"Logs: {LOG_FILE}", curses.color_pair(4), 8),
-                (f"Suggestion: {suggestion}", curses.color_pair(4), 10),
-                ("View logs: cat /var/log/berke/install.log", curses.color_pair(4), 12),
-                ("Report: github.com/BreDEVs/kontrol/issues", curses.color_pair(4), 14),
-                ("Press any key to exit", curses.color_pair(4), 16)
+                ("BERKE OS - ERROR!", curses.A_BOLD | curses.color_pair(1), 1),
+                (f"Stage: {stage}", curses.color_pair(2), 3),
+                (f"Error: {error_msg}", curses.color_pair(2), 5),
+                (f"Logs: {LOG_FILE}", curses.color_pair(2), 7),
+                (f"Suggestion: {suggestion}", curses.color_pair(2), 9),
+                ("View logs: cat /var/log/berke/install.log", curses.color_pair(2), 11),
+                ("Report: github.com/BreDEVs/kontrol/issues", curses.color_pair(2), 13),
+                ("Press any key to exit", curses.color_pair(1), 15)
             ]
-            for line in lines:
-                text, attr, row = line
+            for text, attr, row in lines:
                 formatted_text, x = center_text(text, cols)
                 stdscr.addstr(row, x, formatted_text, attr)
             stdscr.refresh()
@@ -168,20 +167,20 @@ def update_display(stdscr, stages: List[Tuple[str, str]], current_stage: int, su
         stdscr.clear()
         rows, cols = stdscr.getmaxyx()
         title, title_x = center_text("BERKE OS - Setup", cols)
-        stdscr.addstr(2, title_x, title, curses.A_BOLD | curses.color_pair(1))
+        stdscr.addstr(1, title_x, title, curses.A_BOLD | curses.color_pair(1))
         total_stages = len(stages)
         for i, (stage_name, status) in enumerate(stages):
-            row = 5 + i * 2
+            row = 4 + i * 2
             if row >= rows - 2:
                 break
             progress = "█" * int((i + 1 if status == "DONE" else i) * 10 / total_stages)
             stage_text = f"{i+1}. {stage_name[:16]}: [{'*' if i == current_stage and status == '/' else 'DONE' if status == 'DONE' else '-'}] {progress}"
             text, x = center_text(stage_text, cols)
-            attr = curses.color_pair(2) | curses.A_BOLD if i == current_stage and status == "/" else curses.color_pair(3) if status == "DONE" else curses.color_pair(4)
+            attr = curses.color_pair(3) | curses.A_BOLD if i == current_stage and status == "/" else curses.color_pair(4) if status == "DONE" else curses.color_pair(2)
             stdscr.addstr(row, x, text, attr)
             if i == current_stage and status == "/":
                 sub_text, sub_x = center_text(f"{sub_status[:26]}", cols)
-                stdscr.addstr(row + 1, sub_x, sub_text, curses.color_pair(2))
+                stdscr.addstr(row + 1, sub_x, sub_text, curses.color_pair(3))
         stdscr.refresh()
     except Exception as e:
         log_message(f"Display update failed: {e}", logger, "error")
@@ -224,7 +223,6 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
                     parts = line.strip().split()
                     if len(parts) >= 4:
                         disk_name = f"/dev/{parts[3]}"
-                        # Filter out non-partition devices (e.g., sda, nvme0n1)
                         if any(disk_name.startswith(prefix) for prefix in ["/dev/sd", "/dev/nvme", "/dev/hd"]) and disk_name[-1].isdigit():
                             available_disks.append(disk_name)
         except FileNotFoundError:
@@ -238,21 +236,34 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
                 pass
             raise Exception(f"No suitable disk found in /proc/partitions. Available devices: {disk_list}. Ensure a disk is connected.")
 
-        # Log detected disks
         log_message(f"Detected disks: {', '.join(available_disks)}", logger)
         print(f"[{SYSTEM_NAME}] Detected disks: {', '.join(available_disks)}")
 
         # Check /proc/mounts for filesystem type and mount status
+        blkid_cmd = shutil.which("blkid")
         for disk in available_disks:
             try:
+                # Check filesystem type using blkid if available
+                fstype = None
+                if blkid_cmd:
+                    try:
+                        result = subprocess.run([blkid_cmd, disk], capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
+                        if result.returncode == 0:
+                            for line in result.stdout.splitlines():
+                                if f"TYPE=" in line:
+                                    fstype = line.split("TYPE=")[1].strip('"')
+                                    break
+                    except Exception as e:
+                        log_message(f"blkid failed for {disk}: {e}", logger, "warning")
+
                 with open("/proc/mounts", "r") as f:
                     mounts = f.readlines()
                     for line in mounts:
                         if disk in line:
                             parts = line.split()
-                            fstype = parts[2]
-                            if fstype not in SUPPORTED_FILESYSTEMS:
-                                log_message(f"Disk {disk} has unsupported filesystem: {fstype}", logger, "warning")
+                            mount_fstype = parts[2]
+                            if mount_fstype not in SUPPORTED_FILESYSTEMS:
+                                log_message(f"Disk {disk} has unsupported filesystem: {mount_fstype}", logger, "warning")
                                 continue
                             current_mount = parts[1]
                             if current_mount != str(mount_point):
@@ -265,7 +276,11 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
                                     continue
                             log_message(f"Disk {disk} already mounted at {current_mount}", logger)
                             return Path(current_mount), disk
+
                 # Disk not mounted, try mounting
+                if fstype and fstype not in SUPPORTED_FILESYSTEMS:
+                    log_message(f"Disk {disk} has unsupported filesystem: {fstype}", logger, "warning")
+                    continue
                 try:
                     result = subprocess.run([mount_cmd, disk, str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
                     subprocess.run([mount_cmd, "-o", "remount,rw", str(mount_point)], check=True, timeout=TIMEOUT_SECONDS, capture_output=True, text=True)
@@ -280,18 +295,17 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
                 log_message(f"Error processing disk {disk}: {e}", logger, "warning")
                 continue
 
-        # If no disk is suitable, provide detailed error
+        # Detailed error with disk info
         disk_info = []
-        try:
-            for disk in available_disks:
-                blkid_cmd = shutil.which("blkid")
-                if blkid_cmd:
+        if blkid_cmd:
+            try:
+                for disk in available_disks:
                     result = subprocess.run([blkid_cmd, disk], capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
-                    disk_info.append(f"{disk}: {result.stdout.strip()}")
-                else:
-                    disk_info.append(f"{disk}: No blkid info (install util-linux: 'sudo tce-load -wi util-linux')")
-        except Exception:
-            disk_info = ["Unable to retrieve disk info"]
+                    disk_info.append(f"{disk}: {result.stdout.strip() or 'No info'}")
+            except Exception:
+                disk_info = ["Unable to retrieve disk info"]
+        else:
+            disk_info = ["blkid not available; install util-linux: 'sudo tce-load -wi util-linux'"]
 
         error_msg = (
             f"No suitable disk found. Ensure a disk is connected and formatted ({'/'.join(SUPPORTED_FILESYSTEMS)}).\n"
@@ -302,10 +316,9 @@ def detect_disk(logger: Optional[logging.Logger], stdscr=None) -> Tuple[Path, st
         raise Exception(error_msg)
     except Exception as e:
         log_message(f"Disk detection failed: {e}", logger, "error")
-        if stdscr is None:  # Fallback for non-curses mode
+        if stdscr is None:
             print(f"[{SYSTEM_NAME}] ERROR: Disk detection failed: {e}", file=sys.stderr)
             print(f"[{SYSTEM_NAME}] Suggestion: {specific_suggestions['DISK SETUP']}", file=sys.stderr)
-            # Prompt user for manual disk path
             try:
                 print(f"[{SYSTEM_NAME}] Enter disk device (e.g., /dev/sda1) or press Enter to exit: ", end="")
                 disk_input = input().strip()
@@ -353,7 +366,8 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
                 update_display(stdscr, stages, current_stage, sub_status, logger)
             cmd_path = shutil.which(cmd)
             if not cmd_path:
-                suggestion = f"Install {cmd}: 'sudo tce-load -wi {'coreutils' if cmd == 'mount' else cmd}'"
+                pkg = "coreutils" if cmd == "mount" else "util-linux" if cmd == "blkid" else cmd
+                suggestion = f"Install {cmd}: 'sudo tce-load -wi {pkg}'"
                 raise Exception(f"Required command {cmd} not found. {suggestion}")
             log_message(f"{cmd} found: {cmd_path}", logger)
             print(f"[{SYSTEM_NAME}] {cmd} found: {cmd_path}")
@@ -424,7 +438,7 @@ def install_dependencies(stdscr, stages: List[Tuple[str, str]], current_stage: i
 
 # Verify disk
 def verify_disk(stdscr, stages: List[Tuple[str, str]], current_stage: int, logger: Optional[logging.Logger], disk_device: str) -> None:
-    log_message("Verifying disk", logger)
+    log_message(f"Verifying disk {disk_device}", logger)
     print(f"[{SYSTEM_NAME}] Verifying disk {disk_device}...")
     sub_status = ""
 
@@ -490,7 +504,9 @@ def download_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, 
 # Install eDEX-UI
 def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, logger: Optional[logging.Logger]) -> None:
     log_message("Installing eDEX-UI", logger)
-    print(f"Installing eDEX-UI...")
+    print(f"[{SYSTEM_NAME}] Installing eDEX-UI...")
+    sub_status = ""
+
     try:
         clean_temp(logger)
         sub_status = "Installing npm dependencies..."
@@ -504,6 +520,7 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
         for attempt in range(RETRY_ATTEMPTS):
             try:
                 subprocess.run([npm_cmd, "install"], cwd=str(EDEX_DIR), check=True, timeout=600, capture_output=True, text=True, env=env)
+                break
             except subprocess.CalledProcessError as e:
                 if attempt == RETRY_ATTEMPTS - 1:
                     raise Exception(f"npm install failed after {RETRY_ATTEMPTS} attempts: {e.stderr}")
@@ -520,12 +537,11 @@ def install_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, l
             "autoStart": True
         }
         with open(settings_path, "w") as f:
-            json.dump(settings, f, indent=4)
+            json.dump(settings, f, indent=2)
         fix_permissions(settings_path, logger)
-        sub_status = "SUCCESS"
+        sub_status = "eDEX-UI installed"
         if stdscr:
             update_display(stdscr, stages, current_stage, sub_status, logger)
-        log_message("eDEX-UI installed successfully", logger)
         print(f"[{SYSTEM_NAME}] eDEX-UI installed successfully")
     except Exception as e:
         log_message(f"eDEX-UI installation failed: {e}", logger, "error")
@@ -565,14 +581,14 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
             raise Exception("Xorg command not found. Install Xorg: 'sudo tce-load -wi Xorg-7.7'")
         xorg_process = subprocess.Popen(
             [xorg_cmd, ":0", "-quiet"],
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             preexec_fn=os.setsid
         )
         time.sleep(2)
         if xorg_process.poll() is not None:
-            stdout, stderr = xorg_process.communicate(timeout=5)
+            stderr = xorg_process.communicate(timeout=5)[1]
             raise Exception(f"Xorg failed to start: {stderr}")
         sub_status = "Launching eDEX-UI..."
         if stdscr:
@@ -582,7 +598,7 @@ def start_edex_ui(stdscr, stages: List[Tuple[str, str]], current_stage: int, log
         env["DISPLAY"] = ":0"
         npm_cmd = shutil.which("npm")
         if not npm_cmd:
-            raise Exception("npm command not found. Ensure npm is installed: 'npm -v'")
+            raise Exception("npm command not found. Ensure Node.js is installed: 'node -v'")
         process = subprocess.Popen(
             [npm_cmd, "start"],
             cwd=str(EDEX_DIR),
@@ -629,15 +645,16 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             return False
         xorg_process = subprocess.Popen(
             [xorg_cmd, ":0", "-quiet"],
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             preexec_fn=os.setsid
         )
         time.sleep(2)
         if xorg_process.poll() is not None:
-            stdout, stderr = xorg_process.communicate(timeout=5)
+            stderr = xorg_process.communicate(timeout=5)[1]
             log_message(f"Xorg test failed: {stderr}", logger, "warning")
+            os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
             return False
         process = subprocess.Popen(
             [npm_cmd, "start"],
@@ -648,7 +665,7 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             preexec_fn=os.setsid,
             env=env
         )
-        time.sleep(10)
+        time.sleep(5)
         if process.poll() is None:
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
             process.wait(timeout=5)
@@ -658,35 +675,28 @@ def quick_check_edex_ui(logger: Optional[logging.Logger]) -> bool:
             print(f"[{SYSTEM_NAME}] eDEX-UI check passed")
             return True
         stdout, stderr = process.communicate(timeout=5)
-        log_message(f"eDEX-UI check failed: {stderr}", logger, "warning")
+        log_message(f"eDEX-UI quick check failed: {stderr}", logger, "warning")
         os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
         return False
     except Exception as e:
         log_message(f"eDEX-UI quick check failed: {e}", logger, "error")
         return False
-    finally:
-        if 'xorg_process' in locals():
-            os.killpg(os.getpgid(xorg_process.pid), signal.SIGTERM)
 
 # Generate setup report
-def generate_setup_report(start_time: float, attempts: List[str], logger: Optional[logging.Logger]) -> None:
+def generate_setup_report(start_time: float, errors: List[str], logger: Optional[logging.Logger]) -> None:
     try:
         duration = time.time() - start_time
         disk_usage = shutil.disk_usage(BASE_DIR)
-        used_space_GB = (disk_usage.total - disk_usage.free) / (1024 ** 3)
-        report = []
-        report.append(f"[{SYSTEM_NAME}] Setup Report")
-        report.append(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        report.append(f"Duration: {duration:.2f} seconds")
-        report.append(f"Disk Usage: {used_space_GB:.2f} GB")
-        report.append(f"Errors Encountered: {len(attempts)}")
-        report.append("")
-        report.append("Errors:")
-        if len(attempts) == 0:
-            report.append("None")
-        else:
-            for error in attempts:
-                report.append(error)
+        used_space_gb = (disk_usage.total - disk_usage.free) / (1024 ** 3)
+        report = [
+            f"BERKE OS Setup Report",
+            f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Duration: {duration:.2f} seconds",
+            f"Disk Usage: {used_space_gb:.2f} GB",
+            f"Errors Encountered: {len(errors)}",
+            "\nErrors:"
+        ]
+        report.extend(errors if errors else ["None"])
         with open(REPORT_FILE, "w") as f:
             f.write("\n".join(report))
         fix_permissions(REPORT_FILE, logger)
@@ -702,7 +712,7 @@ def main(stdscr=None) -> bool:
     start_time = time.time()
     errors = []
     log_message(f"{SYSTEM_NAME} setup started", logger)
-    print(f"[{SYSTEM_NAME}] Starting setup at {time.strftime('%H:%M:%S')}...")
+    print(f"[{SYSTEM_NAME}] Starting setup...")
 
     try:
         BASE_DIR, disk_device = detect_disk(logger, stdscr)
@@ -711,7 +721,7 @@ def main(stdscr=None) -> bool:
         EDEX_DIR = APP_DIR / "edex-ui"
         fix_permissions(BASE_DIR, logger)
     except Exception as e:
-        errors.append(f"Disk setup: {str(e)}")
+        errors.append(f"Disk setup: {e}")
         log_message(f"Disk setup failed: {e}", logger, "error")
         display_error(stdscr, "DISK SETUP", str(e), logger)
 
@@ -724,9 +734,9 @@ def main(stdscr=None) -> bool:
                 raise Exception(f"Terminal too small: need {MIN_TERM_SIZE[1]}x{MIN_TERM_SIZE[0]}")
             curses.start_color()
             curses.init_pair(1, curses.COLOR_MAGENTA, curses.COLOR_BLACK)
-            curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+            curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_BLACK)
             curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)
-            curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
+            curses.init_pair(4, curses.COLOR_GREEN, curses.COLOR_BLACK)
         except Exception as e:
             log_message(f"Curses setup failed: {e}", logger, "warning")
             stdscr = None
