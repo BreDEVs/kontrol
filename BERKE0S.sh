@@ -3,7 +3,7 @@
 # Script to create a custom Tiny Core Linux-based OS with BERKE0S.py
 # Downloads BERKE0S.py, packages it as .tcz, configures autostart, and customizes system
 # Uses Python 3.9, includes robust error handling, fixes udev/hwdb issues, handles missing boot.msg/isolinux.cfg,
-# and ensures persistence with filetool.sh -b
+# ensures persistence with filetool.sh -b, and downloads missing .tcz packages directly
 
 # Exit on any error (unless handled explicitly)
 set -e
@@ -17,6 +17,7 @@ CONFIG_DIR="/home/tc/.berke0s"
 STARTUP_SCRIPT="/opt/bootlocal.sh"
 FILETOOL_LST="/opt/.filetool.lst"
 UDEV_RULE="/etc/udev/rules.d/90-framebuffer.rules"
+TCE_REPO="http://repo.tinycorelinux.net/14.x/x86/tcz" # Adjust for your Tiny Core version
 
 # Function to check internet connectivity
 check_internet() {
@@ -42,7 +43,6 @@ log_error() {
 find_boot_files() {
     local file="$1"
     local found_files=()
-    # Check common locations
     for path in /boot /mnt/*/boot /mnt/*/boot/isolinux; do
         if [ -f "$path/$file" ]; then
             found_files+=("$path/$file")
@@ -51,24 +51,58 @@ find_boot_files() {
     echo "${found_files[@]}"
 }
 
+# Function to download and install .tcz package directly
+install_tcz_direct() {
+    local pkg="$1"
+    local url="$TCE_REPO/$pkg.tcz"
+    local tcz_file="/tmp/$pkg.tcz"
+    echo "Downloading $pkg.tcz from $url..."
+    if ! wget -q -O "$tcz_file" "$url"; then
+        echo "Warning: Failed to download $pkg.tcz from $url."
+        return 1
+    fi
+    if ! tce-load -i "$tcz_file" 2>/dev/null; then
+        echo "Warning: Failed to install $tcz_file."
+        rm -f "$tcz_file"
+        return 1
+    fi
+    rm -f "$tcz_file"
+    echo "Successfully installed $pkg.tcz."
+    return 0
+}
+
 # Function to find and configure persistent storage
 find_persistent_storage() {
     echo "Checking for persistent storage..."
     local tce_dir=""
-    # Look for /mnt/*/tce directories
+    # Look for existing /mnt/*/tce directories
     for dir in /mnt/*/tce; do
         if [ -d "$dir" ] && [ -w "$dir" ]; then
             tce_dir="$dir"
             break
         fi
     done
-    # If no tce directory found, try to create one on a writable partition
+    # If no tce directory found, try to mount and create one
     if [ -z "$tce_dir" ]; then
-        echo "No persistent storage found. Attempting to set up..."
-        for dev in /mnt/*; do
-            if [ -d "$dev" ] && [ -w "$dev" ]; then
-                if mkdir -p "$dev/tce" 2>/dev/null; then
-                    tce_dir="$dev/tce"
+        echo "No persistent storage found. Scanning for writable devices..."
+        local devices=$(lsblk -dno NAME,TYPE | grep disk | awk '{print "/dev/"$1}')
+        for dev in $devices; do
+            local mount_point="/mnt/$(basename $dev)"
+            if [ ! -d "$mount_point" ]; then
+                sudo mkdir -p "$mount_point" || continue
+            fi
+            if ! mount | grep -q "$mount_point"; then
+                echo "Attempting to mount $dev to $mount_point..."
+                if sudo mount "$dev" "$mount_point" 2>/dev/null; then
+                    echo "Mounted $dev to $mount_point."
+                else
+                    echo "Warning: Failed to mount $dev."
+                    continue
+                fi
+            fi
+            if [ -w "$mount_point" ]; then
+                if sudo mkdir -p "$mount_point/tce" 2>/dev/null; then
+                    tce_dir="$mount_point/tce"
                     echo "Created $tce_dir for persistence."
                     break
                 fi
@@ -77,9 +111,20 @@ find_persistent_storage() {
     fi
     if [ -z "$tce_dir" ]; then
         echo "Error: No writable storage device found for persistence."
-        echo "Please mount a writable device (e.g., USB drive) and create /mnt/<device>/tce/."
-        echo "Example: sudo mkdir -p /mnt/sda1/tce"
-        exit 1
+        echo "Available devices:"
+        lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT
+        echo "Steps to fix:"
+        echo "1. Insert a writable USB drive or ensure a disk partition is available."
+        echo "2. Mount a device, e.g., sudo mount /dev/sda1 /mnt/sda1"
+        echo "3. Create /tce/, e.g., sudo mkdir -p /mnt/sda1/tce"
+        echo "4. Re-run this script."
+        log_error "Persistence setup failed."
+    fi
+    # Check disk space
+    local free_space=$(df -k "$tce_dir" | tail -1 | awk '{print $4}')
+    if [ "$free_space" -lt 10240 ]; then # Less than 10MB
+        echo "Error: Insufficient disk space in $tce_dir ($free_space KB available)."
+        log_error "Need at least 10MB free for persistence."
     fi
     echo "Using $tce_dir for persistent storage."
     echo "$tce_dir"
@@ -98,15 +143,19 @@ check_internet
 # Step 2: Install required tools and dependencies
 echo "Installing required tools and dependencies..."
 DEPENDENCIES=(
-    squashfs-tools python3.9 python3.9-pip alsa bluez
-    e2fsprogs nano htop bash tar zip dosfstools
-    syslinux perl5 mpv scrot libnotify util-linux
+    squashfs-tools python3.9 tk tcl python3.9-pip alsa bluez
+    e2fsprogs nano htop bash network-manager tar zip dosfstools
+    syslinux perl5 mpv scrot libnotify alsa-utils wireless-tools
+    espeak util-linux Xvesa fbcon vesafb
 )
 for pkg in "${DEPENDENCIES[@]}"; do
     if ! tce-load -wi "$pkg.tcz" 2>/dev/null; then
-        echo "Warning: Failed to install $pkg.tcz. Checking if already installed..."
-        if ! tce-status -i | grep -q "^$pkg$"; then
-            log_error "Failed to install $pkg.tcz and it's not present."
+        echo "Warning: Failed to install $pkg.tcz via tce-load. Attempting direct download..."
+        if ! install_tcz_direct "$pkg"; then
+            echo "Warning: $pkg.tcz not found or failed to install. Checking if already installed..."
+            if ! tce-status -i | grep -q "^$pkg$"; then
+                log_error "Failed to install $pkg.tcz and it's not present."
+            fi
         fi
     fi
 done
@@ -210,7 +259,6 @@ PERSIST_PATHS=(
     "$STARTUP_SCRIPT"
     home/tc/.Xsession
 )
-# Create /opt/.filetool.lst if it doesn't exist
 if [ ! -f "$FILETOOL_LST" ]; then
     sudo touch "$FILETOOL_LST" || log_error "Failed to create $FILETOOL_LST."
 fi
@@ -222,7 +270,6 @@ done
 
 # Step 12: Verify and configure persistent storage
 TCE_DIR=$(find_persistent_storage)
-# Ensure /opt/.filetool.lst is writable
 sudo chmod u+w "$FILETOOL_LST" || log_error "Failed to set permissions on $FILETOOL_LST."
 
 # Step 13: Customize system branding
@@ -240,7 +287,7 @@ find /etc -type f -exec sudo sed -i 's/Tiny Core/Berke0S/g' {} + 2>/dev/null || 
 
 # Step 14: Save changes
 echo "Saving changes..."
-if ! filetool.sh -b 2>&1 | tee /tmp/filetool.log; then
+if ! sudo filetool.sh -b 2>&1 | tee /tmp/filetool.log; then
     echo "Error: filetool.sh -b failed. Log output:"
     cat /tmp/filetool.log
     echo "Possible causes:"
@@ -250,9 +297,10 @@ if ! filetool.sh -b 2>&1 | tee /tmp/filetool.log; then
     echo "Steps to fix:"
     echo "1. Check mounted devices: ls /mnt"
     echo "2. Ensure $TCE_DIR exists and is writable: ls -ld $TCE_DIR"
-    echo "3. Mount a writable device, e.g., sudo mount /dev/sda1 /mnt/sda1"
-    echo "4. Create $TCE_DIR if missing: sudo mkdir -p $TCE_DIR"
-    echo "5. Re-run: sudo filetool.sh -b"
+    echo "3. Check disk space: df -h $TCE_DIR"
+    echo "4. Mount a writable device, e.g., sudo mount /dev/sda1 /mnt/sda1"
+    echo "5. Create $TCE_DIR if missing: sudo mkdir -p $TCE_DIR"
+    echo "6. Re-run: sudo filetool.sh -b"
     log_error "Persistence setup failed."
 fi
 rm -f /tmp/filetool.log
