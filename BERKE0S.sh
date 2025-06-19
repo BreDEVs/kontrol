@@ -98,10 +98,9 @@ check_internet
 # Step 2: Install required tools and dependencies
 echo "Installing required tools and dependencies..."
 DEPENDENCIES=(
-    squashfs-tools python3.9 tk tcl python3.9-pip alsa bluez
-    e2fsprogs nano htop bash network-manager tar zip dosfstools
-    syslinux perl5 mpv scrot libnotify alsa-utils wireless-tools
-    espeak util-linux Xvesa fbcon vesafb
+    squashfs-tools python3.9 python3.9-pip alsa bluez
+    e2fsprogs nano htop bash tar zip dosfstools
+    syslinux perl5 mpv scrot libnotify util-linux
 )
 for pkg in "${DEPENDENCIES[@]}"; do
     if ! tce-load -wi "$pkg.tcz" 2>/dev/null; then
