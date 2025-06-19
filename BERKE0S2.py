@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -11,6 +10,10 @@ import socket
 import bcrypt
 import re
 import shutil
+import pygments
+from pygments.lexers import get_lexer_by_name
+from pygments.formatter import Formatter
+from pygments.lex import lex
 import getpass
 import datetime
 import hashlib
@@ -19,7 +22,7 @@ import queue
 import math
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
-from PIL import Image, ImageTk, ImageGrab
+from PIL import Image, ImageTk
 import pty
 import fcntl
 import termios
@@ -35,11 +38,10 @@ import grp
 import stat
 import imaplib
 import email
+import requests
 import smtplib
 from email.message import EmailMessage
-import requests
 from flask import Flask, request, jsonify
-
 
 ### --- CONFIGURATION AND INITIALIZATION ---
 CONFIG_DIR = "/home/tc/.berke0s"
