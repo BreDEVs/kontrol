@@ -2,7 +2,7 @@
 
 # Script to create a custom Tiny Core Linux-based OS with BERKE0S.py
 # Downloads BERKE0S.py, packages it as .tcz, configures autostart, and customizes system
-# Uses Python 3.9, includes robust error handling, and fixes udev/hwdb issues
+# Uses Python 3.9, includes robust error handling, fixes udev/hwdb issues, and handles missing boot.msg/isolinux.cfg
 
 # Exit on any error (unless handled explicitly)
 set -e
@@ -15,9 +15,6 @@ WORK_DIR="/tmp/berke0s"
 CONFIG_DIR="/home/tc/.berke0s"
 STARTUP_SCRIPT="/opt/bootlocal.sh"
 FILETOOL_LST="/opt/.filetool.lst"
-BOOT_MSG="/boot/boot.msg"
-ISOLINUX_CFG="/boot/isolinux/isolinux.cfg"
-XSESSION="/home/tc/.Xsession"
 UDEV_RULE="/etc/udev/rules.d/90-framebuffer.rules"
 
 # Function to check internet connectivity
@@ -38,6 +35,19 @@ command_exists() {
 log_error() {
     echo "Error: $1" >&2
     exit 1
+}
+
+# Function to find boot files (boot.msg, isolinux.cfg, syslinux.cfg)
+find_boot_files() {
+    local file="$1"
+    local found_files=()
+    # Check common locations
+    for path in /boot /mnt/*/boot /mnt/*/boot/isolinux; do
+        if [ -f "$path/$file" ]; then
+            found_files+=("$path/$file")
+        fi
+    done
+    echo "${found_files[@]}"
 }
 
 # Step 1: Validate environment
@@ -130,9 +140,9 @@ sudo chmod +x "$STARTUP_SCRIPT" || log_error "Failed to make $STARTUP_SCRIPT exe
 
 # Step 8: Configure X session
 echo "Configuring X session..."
-if [ ! -f "$XSESSION" ]; then
-    echo "exec /usr/local/bin/BERKE0S.py" | sudo tee "$XSESSION" || log_error "Failed to create $XSESSION."
-    sudo chmod +x "$XSESSION" || log_error "Failed to make $XSESSION executable."
+if [ ! -f "/home/tc/.Xsession" ]; then
+    echo "exec /usr/local/bin/BERKE0S.py" | sudo tee /home/tc/.Xsession || log_error "Failed to create /home/tc/.Xsession."
+    sudo chmod +x /home/tc/.Xsession || log_error "Failed to make /home/tc/.Xsession executable."
 fi
 
 # Step 9: Create framebuffer udev rule
@@ -164,7 +174,7 @@ PERSIST_PATHS=(
     home/tc/.berke0s
     etc/udev/rules.d
     "$STARTUP_SCRIPT"
-    "$XSESSION"
+    home/tc/.Xsession
 )
 for path in "${PERSIST_PATHS[@]}"; do
     if ! grep -q "^$path$" "$FILETOOL_LST" 2>/dev/null; then
@@ -174,8 +184,17 @@ done
 
 # Step 12: Customize system branding
 echo "Customizing system branding..."
-[ -f "$BOOT_MSG" ] && sudo sed -i 's/Tiny Core/Berke0S/g' "$BOOT_MSG" || echo "Warning: $BOOT_MSG not found."
-[ -f "$ISOLINUX_CFG" ] && sudo sed -i 's/Tiny Core/Berke0S/g' "$ISOLINUX_CFG" || echo "Warning: $ISOLINUX_CFG not found."
+BOOT_MSG_FILES=($(find_boot_files boot.msg))
+ISOLINUX_FILES=($(find_boot_files isolinux.cfg))
+SYSLINUX_FILES=($(find_boot_files syslinux.cfg))
+
+for file in "${BOOT_MSG_FILES[@]}"; do
+    sudo sed -i 's/Tiny Core/Berke0S/g' "$file" && echo "Updated branding in $file" || echo "Warning: Failed to update $file."
+done
+for file in "${ISOLINUX_FILES[@]}" "${SYSLINUX_FILES[@]}"; do
+    sudo sed -i 's/Tiny Core/Berke0S/g' "$file" && echo "Updated branding in $file" || echo "Warning: Failed to update $file."
+done
+# Update /etc files
 find /etc -type f -exec sudo sed -i 's/Tiny Core/Berke0S/g' {} + 2>/dev/null || echo "Warning: Some /etc files could not be modified."
 
 # Step 13: Save changes
@@ -191,5 +210,5 @@ rm -rf "$WORK_DIR" || echo "Warning: Failed to clean up $WORK_DIR."
 # Step 15: Inform user
 echo "Installation complete! Reboot to apply changes."
 echo "BERKE0S.py will run automatically on startup with Python 3.9."
-echo "System branding updated to Berke0S."
+echo "System branding updated to Berke0S where possible."
 echo "Run 'sudo reboot' to start using Berke0S."
