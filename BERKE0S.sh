@@ -4,6 +4,7 @@
 # Downloads BERKE0S.py, packages it as .tcz, configures autostart, and customizes system
 # Uses Python 3.9, includes robust error handling, fixes udev/hwdb issues, handles missing boot.msg/isolinux.cfg,
 # ensures persistence with filetool.sh -b, and downloads missing .tcz packages from multiple mirrors
+# Removes network-manager/wicd dependency, uses udhcpc and wireless-tools for networking
 
 # Exit on any error (unless handled explicitly)
 set -e
@@ -36,9 +37,9 @@ log_message() {
 # Function to check internet connectivity
 check_internet() {
     log_message "Checking internet connectivity..."
-    # Start network services if available
-    if [ -f /etc/init.d/services/networkmanager ]; then
-        sudo /etc/init.d/services/networkmanager start 2>>"$LOG_FILE" || log_message "Warning: Failed to start networkmanager."
+    # Start DHCP client if available
+    if command_exists udhcpc; then
+        sudo udhcpc -i eth0 2>>"$LOG_FILE" || log_message "Warning: Failed to start udhcpc on eth0."
     fi
     # Try primary endpoint
     if wget -q --spider http://www.google.com 2>/dev/null; then
@@ -50,7 +51,11 @@ check_internet() {
         log_message "Internet connection confirmed (secondary endpoint)."
         return 0
     fi
-    log_error "No internet connection. Ensure network is configured (e.g., sudo /etc/init.d/services/networkmanager start) and try again."
+    log_message "No internet connection detected."
+    log_message "Steps to configure network:"
+    log_message "1. For Ethernet: sudo udhcpc -i eth0"
+    log_message "2. For Wi-Fi: sudo iwconfig wlan0 essid YOUR_SSID key YOUR_PASSWORD; sudo udhcpc -i wlan0"
+    log_error "Ensure network is configured and try again."
 }
 
 # Function to check if a command exists
@@ -80,6 +85,7 @@ find_boot_files() {
 # Function to download and install .tcz package
 install_tcz() {
     local pkg="$1"
+    local optional="$2" # "yes" for non-critical packages
     local tcz_file="/tmp/$pkg.tcz"
     local alt_pkgs=("$pkg" "${pkg}8.6" "${pkg}8.5") # Fallback package names
     if tce-status -i | grep -q "^$pkg$"; then
@@ -106,6 +112,10 @@ install_tcz() {
             fi
         done
     done
+    if [ "$optional" = "yes" ]; then
+        log_message "Warning: $pkg.tcz and alternatives not found. Skipping non-critical package."
+        return 0
+    fi
     log_error "$pkg.tcz and alternatives not found in any mirror."
 }
 
@@ -152,7 +162,7 @@ find_persistent_storage() {
     if [ -z "$tce_dir" ]; then
         log_message "No writable storage device found."
         lsblk -o NAME,FSTYPE,SIZE,MOUNTPOINT | tee -a "$LOG_FILE"
-        log_error "No persistent storage available. Insert a USB drive, format it (e.g., sudo mkfs.ext4 /dev/sda1), mount it (sudo mount /dev/sda1 /mnt/sda1), create /tce/ (sudo mkdir -p /mnt/sda1/tce), and re-run the script."
+        log_error "No persistent storage. Insert a USB drive, format it (e.g., sudo mkfs.ext4 /dev/sda1), mount it (sudo mount /dev/sda1 /mnt/sda1), create /tce/ (sudo mkdir -p /mnt/sda1/tce), and re-run."
     fi
     # Check disk space
     local free_space=$(df -k "$tce_dir" | tail -1 | awk '{print $4}')
@@ -179,14 +189,19 @@ check_internet
 
 # Step 2: Install required tools and dependencies
 log_message "Installing required tools and dependencies..."
-DEPENDENCIES=(
+CORE_DEPS=(
     squashfs-tools python3.9 tk tcl python3.9-pip alsa bluez
-    e2fsprogs nano htop bash network-manager tar zip dosfstools
-    syslinux perl5 mpv scrot libnotify alsa-utils wireless-tools
-    espeak util-linux Xvesa fbcon vesafb
+    e2fsprogs nano htop bash tar zip dosfstools syslinux perl5
+    util-linux wireless-tools
 )
-for pkg in "${DEPENDENCIES[@]}"; do
+OPTIONAL_DEPS=(
+    mpv scrot libnotify alsa-utils espeak Xvesa fbcon vesafb
+)
+for pkg in "${CORE_DEPS[@]}"; do
     install_tcz "$pkg"
+done
+for pkg in "${OPTIONAL_DEPS[@]}"; do
+    install_tcz "$pkg" "yes"
 done
 
 # Install Python dependencies
@@ -240,6 +255,8 @@ fi
 log_message "Configuring startup script..."
 if ! grep -q "BERKE0S.py" "$STARTUP_SCRIPT" 2>/dev/null; then
     {
+        echo "# Configure networking"
+        echo "udhcpc -i eth0 2>/dev/null || true"
         echo "# Load framebuffer modules"
         echo "modprobe fbcon 2>/dev/null"
         echo "modprobe vesafb 2>/dev/null"
