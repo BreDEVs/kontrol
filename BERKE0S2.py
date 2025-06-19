@@ -11,10 +11,6 @@ import socket
 import bcrypt
 import re
 import shutil
-import pygments
-from pygments.lexers import get_lexer_by_name
-from pygments.formatter import Formatter
-from pygments.lex import lex
 import getpass
 import datetime
 import hashlib
@@ -23,7 +19,7 @@ import queue
 import math
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 import pty
 import fcntl
 import termios
@@ -39,9 +35,9 @@ import grp
 import stat
 import imaplib
 import email
-import requests
 import smtplib
 from email.message import EmailMessage
+import requests
 from flask import Flask, request, jsonify
 
 ### --- CONFIGURATION AND INITIALIZATION ---
@@ -134,7 +130,7 @@ def install_packages():
     packages = [
         "python3.9", "tk", "tcl", "python3.9-pip", "alsa", "bluez",
         "e2fsprogs", "nano", "htop", "bash", "tar", "zip", "wireless-tools",
-        "scrot", "libnotify", "espeak", "mpv" , "Xorg"
+        "scrot", "libnotify", "espeak", "mpv"
     ]
     for pkg in packages:
         try:
@@ -1917,122 +1913,92 @@ class FileManager:
             pass
 
 ### --- ADVANCED CODE EDITOR ---
+### --- CODE EDITOR ---
 class CodeEditor:
-    """Advanced code editor with syntax highlighting and runner."""
     def __init__(self, wm):
         self.wm = wm
-        self.filename = None
-        self.highlighter = None
+        self.file_path = None
+        self.text_widget = None
 
-    def open(self):
+    def open(self, path=None):
+        """Open a code editor window, optionally with a file."""
+        self.file_path = path
         self.wm.create_window("Code Editor", self.build_ui, width=800, height=600)
 
-    def open_file(self, filename):
-        """Open a specific file."""
-        self.filename = filename
-        self.open()
-        self.load_file()
-
     def build_ui(self, frame):
-        """Build the code editor UI."""
+        """Build the code editor UI without syntax highlighting."""
         try:
-            # Menu bar
-            menubar = tk.Menu(frame)
-            file_menu = tk.Menu(menubar, tearoff=0, bg="#333333", fg="white")
-            file_menu.add_command(label="New", command=self.new_file)
-            file_menu.add_command(label="Open", command=self.open_dialog)
-            file_menu.add_command(label="Save", command=self.save_file)
-            file_menu.add_command(label="Save As", command=self.save_as)
-            file_menu.add_separator()
-            file_menu.add_command(label="Run", command=self.run_code)
-            menubar.add_cascade(label="File", menu=file_menu)
-            self.wm.root.config(menu=menubar)
-
             # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
+            toolbar = tk.Frame(frame, bg="rgba(0,0,0,0.4)")
             toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="New", command=self.new_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Open", command=self.open_dialog, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save", command=self.save_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Run", command=self.run_code, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            language_var = tk.StringVar(value="Python")
-            tk.OptionMenu(toolbar, language_var, "Python", "Bash", command=self.update_highlighter).pack(side=tk.LEFT, padx=2)
+            tk.Button(toolbar, text="New", command=self.new_file).pack(side=tk.LEFT, padx=2)
+            tk.Button(toolbar, text="Open", command=self.open_file).pack(side=tk.LEFT, padx=2)
+            tk.Button(toolbar, text="Save", command=self.save_file).pack(side=tk.LEFT, padx=2)
+            tk.Button(toolbar, text="Save As", command=self.save_file_as).pack(side=tk.LEFT, padx=2)
 
-            # Editor and output
-            main_frame = tk.Frame(frame, bg="#333333")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            self.editor = tk.Text(main_frame, bg="#2e2e2e", fg="white", 
-                                font=("Monospace", 12), insertbackground="white")
-            self.editor.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-            self.output = tk.Text(main_frame, bg="#2e2e2e", fg="white", 
-                                font=("Monospace", 12), height=10)
-            self.output.pack(fill=tk.X, side=tk.BOTTOM)
-            scrollbar = tk.Scrollbar(main_frame, command=self.editor.yview)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.editor.config(yscrollcommand=scrollbar.set)
+            # Text area
+            self.text_widget = tk.Text(frame, bg="rgba(0,0,0,0.6)", fg="white", 
+                                      font=("Monospace", 12), wrap=tk.NONE)
+            self.text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Load file content if path exists
+            if self.file_path and os.path.exists(self.file_path):
+                try:
+                    with open(self.file_path, 'r', encoding='utf-8') as f:
+                        self.text_widget.insert(tk.END, f.read())
+                    self.wm.notifications.send("Code Editor", f"Opened {self.file_path}")
+                    self.wm.audit_log(f"Opened file in code editor: {self.file_path}")
+                except Exception as e:
+                    self.wm.notifications.send("Code Editor", f"Error opening file: {str(e)}")
 
-            # Syntax highlighting
-            self.highlighter = PygmentsHighlighter(self.editor, "python")
-            self.editor.bind("<KeyRelease>", self.highlight_code)
+            # Bind accessibility
+            self.text_widget.bind("<FocusIn>", self.wm.accessibility.read_widget)
         except Exception as e:
             tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
+                     bg="rgba(0,0,0,0.4)").pack(padx=10, pady=10)
 
     def new_file(self):
-        """Create a new file."""
-        try:
-            self.filename = None
-            self.editor.delete(1.0, tk.END)
-            self.output.delete(1.0, tk.END)
-        except:
-            pass
+        """Clear the text area for a new file."""
+        self.file_path = None
+        self.text_widget.delete(1.0, tk.END)
+        self.wm.notifications.send("Code Editor", "New file created")
 
-    def open_dialog(self):
-        """Open a file dialog."""
-        try:
-            filename = filedialog.askopenfilename()
-            if filename:
-                self.filename = filename
-                self.load_file()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def load_file(self):
-        """Load file content."""
-        try:
-            with open(self.filename, 'r') as f:
-                content = f.read()
-            self.editor.delete(1.0, tk.END)
-            self.editor.insert(tk.END, content)
-            self.update_highlighter(self.filename.split('.')[-1])
-            self.highlight_code()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
+    def open_file(self):
+        """Open a file dialog to select a file."""
+        path = filedialog.askopenfilename(filetypes=[("Code Files", "*.py *.sh *.c *.cpp"), 
+                                                    ("All Files", "*.*")])
+        if path:
+            self.file_path = path
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    self.text_widget.delete(1.0, tk.END)
+                    self.text_widget.insert(tk.END, f.read())
+                self.wm.notifications.send("Code Editor", f"Opened {path}")
+                self.wm.audit_log(f"Opened file in code editor: {path}")
+            except Exception as e:
+                self.wm.notifications.send("Code Editor", f"Error opening file: {str(e)}")
 
     def save_file(self):
         """Save the current file."""
-        try:
-            if self.filename:
-                with open(self.filename, 'w') as f:
-                    f.write(self.editor.get(1.0, tk.END).strip())
-            else:
-                self.save_as()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
+        if not self.file_path:
+            self.save_file_as()
+        else:
+            try:
+                with open(self.file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.text_widget.get(1.0, tk.END).rstrip())
+                self.wm.notifications.send("Code Editor", f"Saved {self.file_path}")
+                self.wm.audit_log(f"Saved file in code editor: {self.file_path}")
+            except Exception as e:
+                self.wm.notifications.send("Code Editor", f"Error saving file: {str(e)}")
 
-    def save_as(self):
-        """Save file with a new name."""
-        try:
-            filename = filedialog.asksaveasfilename()
-            if filename:
-                self.filename = filename
-                self.save_file()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
+    def save_file_as(self):
+        """Save the file with a new name."""
+        path = filedialog.asksavefilename(defaultextension=".py", 
+                                         filetypes=[("Code Files", "*.py *.sh *.c *.cpp"), 
+                                                    ("All Files", "*.*")])
+        if path:
+            self.file_path = path
+            self.save_file()
 
     def run_code(self):
         """Run the code based on language."""
