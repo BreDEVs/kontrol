@@ -1,3 +1,4 @@
+
 import os
 import sys
 import time
@@ -10,10 +11,6 @@ import socket
 import bcrypt
 import re
 import shutil
-import pygments
-from pygments.lexers import get_lexer_by_name
-from pygments.formatter import Formatter
-from pygments.lex import lex
 import getpass
 import datetime
 import hashlib
@@ -22,7 +19,7 @@ import queue
 import math
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 import pty
 import fcntl
 import termios
@@ -40,7 +37,9 @@ import imaplib
 import email
 import smtplib
 from email.message import EmailMessage
+import requests
 from flask import Flask, request, jsonify
+
 
 ### --- CONFIGURATION AND INITIALIZATION ---
 CONFIG_DIR = "/home/tc/.berke0s"
@@ -139,12 +138,12 @@ def install_packages():
             subprocess.run(["tce-load", "-wi", pkg], check=True, capture_output=True)
             logging.info(f"Installed package: {pkg}")
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Package install failed: {pkg} - {e}")
+            logging.warning(f"Package install failed: {pkg} - {e.stderr.decode()}")
     try:
-        subprocess.run(["pip3", "install", "psutil", "Pillow", "flask"], check=True)
+        subprocess.run(["pip3", "install", "psutil", "Pillow", "flask", "requests"], check=True)
         logging.info("Installed Python dependencies")
     except subprocess.CalledProcessError as e:
-        logging.warning(f"Python dependencies install failed: {e}")
+        logging.warning(f"Python dependencies install failed: {e.stderr.decode()}")
 
 # Setup autostart
 def setup_autostart():
