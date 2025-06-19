@@ -2,7 +2,8 @@
 
 # Script to create a custom Tiny Core Linux-based OS with BERKE0S.py
 # Downloads BERKE0S.py, packages it as .tcz, configures autostart, and customizes system
-# Uses Python 3.9, includes robust error handling, fixes udev/hwdb issues, and handles missing boot.msg/isolinux.cfg
+# Uses Python 3.9, includes robust error handling, fixes udev/hwdb issues, handles missing boot.msg/isolinux.cfg,
+# and ensures persistence with filetool.sh -b
 
 # Exit on any error (unless handled explicitly)
 set -e
@@ -48,6 +49,40 @@ find_boot_files() {
         fi
     done
     echo "${found_files[@]}"
+}
+
+# Function to find and configure persistent storage
+find_persistent_storage() {
+    echo "Checking for persistent storage..."
+    local tce_dir=""
+    # Look for /mnt/*/tce directories
+    for dir in /mnt/*/tce; do
+        if [ -d "$dir" ] && [ -w "$dir" ]; then
+            tce_dir="$dir"
+            break
+        fi
+    done
+    # If no tce directory found, try to create one on a writable partition
+    if [ -z "$tce_dir" ]; then
+        echo "No persistent storage found. Attempting to set up..."
+        for dev in /mnt/*; do
+            if [ -d "$dev" ] && [ -w "$dev" ]; then
+                if mkdir -p "$dev/tce" 2>/dev/null; then
+                    tce_dir="$dev/tce"
+                    echo "Created $tce_dir for persistence."
+                    break
+                fi
+            fi
+        done
+    fi
+    if [ -z "$tce_dir" ]; then
+        echo "Error: No writable storage device found for persistence."
+        echo "Please mount a writable device (e.g., USB drive) and create /mnt/<device>/tce/."
+        echo "Example: sudo mkdir -p /mnt/sda1/tce"
+        exit 1
+    fi
+    echo "Using $tce_dir for persistent storage."
+    echo "$tce_dir"
 }
 
 # Step 1: Validate environment
@@ -176,38 +211,58 @@ PERSIST_PATHS=(
     "$STARTUP_SCRIPT"
     home/tc/.Xsession
 )
+# Create /opt/.filetool.lst if it doesn't exist
+if [ ! -f "$FILETOOL_LST" ]; then
+    sudo touch "$FILETOOL_LST" || log_error "Failed to create $FILETOOL_LST."
+fi
 for path in "${PERSIST_PATHS[@]}"; do
     if ! grep -q "^$path$" "$FILETOOL_LST" 2>/dev/null; then
         echo "$path" | sudo tee -a "$FILETOOL_LST" || log_error "Failed to add $path to $FILETOOL_LST."
     fi
 done
 
-# Step 12: Customize system branding
+# Step 12: Verify and configure persistent storage
+TCE_DIR=$(find_persistent_storage)
+# Ensure /opt/.filetool.lst is writable
+sudo chmod u+w "$FILETOOL_LST" || log_error "Failed to set permissions on $FILETOOL_LST."
+
+# Step 13: Customize system branding
 echo "Customizing system branding..."
 BOOT_MSG_FILES=($(find_boot_files boot.msg))
 ISOLINUX_FILES=($(find_boot_files isolinux.cfg))
 SYSLINUX_FILES=($(find_boot_files syslinux.cfg))
-
 for file in "${BOOT_MSG_FILES[@]}"; do
     sudo sed -i 's/Tiny Core/Berke0S/g' "$file" && echo "Updated branding in $file" || echo "Warning: Failed to update $file."
 done
 for file in "${ISOLINUX_FILES[@]}" "${SYSLINUX_FILES[@]}"; do
     sudo sed -i 's/Tiny Core/Berke0S/g' "$file" && echo "Updated branding in $file" || echo "Warning: Failed to update $file."
 done
-# Update /etc files
 find /etc -type f -exec sudo sed -i 's/Tiny Core/Berke0S/g' {} + 2>/dev/null || echo "Warning: Some /etc files could not be modified."
 
-# Step 13: Save changes
+# Step 14: Save changes
 echo "Saving changes..."
-if ! filetool.sh -b 2>/dev/null; then
-    log_error "Failed to save changes with filetool.sh."
+if ! filetool.sh -b 2>&1 | tee /tmp/filetool.log; then
+    echo "Error: filetool.sh -b failed. Log output:"
+    cat /tmp/filetool.log
+    echo "Possible causes:"
+    echo "- No writable storage device mounted at $TCE_DIR."
+    echo "- Insufficient disk space on the storage device."
+    echo "- Filesystem is read-only or corrupted."
+    echo "Steps to fix:"
+    echo "1. Check mounted devices: ls /mnt"
+    echo "2. Ensure $TCE_DIR exists and is writable: ls -ld $TCE_DIR"
+    echo "3. Mount a writable device, e.g., sudo mount /dev/sda1 /mnt/sda1"
+    echo "4. Create $TCE_DIR if missing: sudo mkdir -p $TCE_DIR"
+    echo "5. Re-run: sudo filetool.sh -b"
+    log_error "Persistence setup failed."
 fi
+rm -f /tmp/filetool.log
 
-# Step 14: Clean up
+# Step 15: Clean up
 echo "Cleaning up..."
 rm -rf "$WORK_DIR" || echo "Warning: Failed to clean up $WORK_DIR."
 
-# Step 15: Inform user
+# Step 16: Inform user
 echo "Installation complete! Reboot to apply changes."
 echo "BERKE0S.py will run automatically on startup with Python 3.9."
 echo "System branding updated to Berke0S where possible."
