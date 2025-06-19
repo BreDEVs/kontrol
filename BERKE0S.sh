@@ -36,9 +36,21 @@ log_message() {
 # Function to check internet connectivity
 check_internet() {
     log_message "Checking internet connectivity..."
-    if ! ping -c 1 8.8.8.8 &>/dev/null; then
-        log_error "No internet connection. Please connect to a network and try again."
+    # Start network services if available
+    if [ -f /etc/init.d/services/networkmanager ]; then
+        sudo /etc/init.d/services/networkmanager start 2>>"$LOG_FILE" || log_message "Warning: Failed to start networkmanager."
     fi
+    # Try primary endpoint
+    if wget -q --spider http://www.google.com 2>/dev/null; then
+        log_message "Internet connection confirmed."
+        return 0
+    fi
+    # Try secondary endpoint
+    if wget -q --spider http://www.example.com 2>/dev/null; then
+        log_message "Internet connection confirmed (secondary endpoint)."
+        return 0
+    fi
+    log_error "No internet connection. Ensure network is configured (e.g., sudo /etc/init.d/services/networkmanager start) and try again."
 }
 
 # Function to check if a command exists
@@ -48,7 +60,8 @@ command_exists() {
 
 # Function to log errors and exit
 log_error() {
-    log_message "Error: $1"
+    log_message "ERROR: $1"
+    echo "Installation failed. Check $LOG_FILE for details."
     exit 1
 }
 
@@ -68,13 +81,13 @@ find_boot_files() {
 install_tcz() {
     local pkg="$1"
     local tcz_file="/tmp/$pkg.tcz"
-    local alt_pkgs=("$pkg" "${pkg}8.6" "${pkg}8.5") # Fallback package names (e.g., tk8.6)
+    local alt_pkgs=("$pkg" "${pkg}8.6" "${pkg}8.5") # Fallback package names
     if tce-status -i | grep -q "^$pkg$"; then
         log_message "$pkg.tcz is already installed."
         return 0
     fi
     log_message "Installing $pkg.tcz..."
-    if tce-load -wi "$pkg.tcz" 2>/dev/null; then
+    if tce-load -wi "$pkg.tcz" 2>>"$LOG_FILE"; then
         log_message "Successfully installed $pkg.tcz via tce-load."
         return 0
     fi
@@ -83,8 +96,8 @@ install_tcz() {
         for mirror in "${REPO_MIRRORS[@]}"; do
             local url="$mirror/$alt_pkg.tcz"
             log_message "Trying $alt_pkg.tcz from $url..."
-            if wget -q -O "$tcz_file" "$url" 2>/dev/null; then
-                if tce-load -i "$tcz_file" 2>/dev/null; then
+            if wget -q -O "$tcz_file" "$url" 2>>"$LOG_FILE"; then
+                if tce-load -i "$tcz_file" 2>>"$LOG_FILE"; then
                     log_message "Successfully installed $alt_pkg.tcz."
                     rm -f "$tcz_file"
                     return 0
@@ -114,11 +127,11 @@ find_persistent_storage() {
         for dev in $devices; do
             local mount_point="/mnt/$(basename $dev)"
             if [ ! -d "$mount_point" ]; then
-                sudo mkdir -p "$mount_point" || continue
+                sudo mkdir -p "$mount_point" 2>>"$LOG_FILE" || continue
             fi
             if ! mount | grep -q "$mount_point"; then
                 log_message "Attempting to mount $dev to $mount_point..."
-                if sudo mount "$dev" "$mount_point" 2>/dev/null; then
+                if sudo mount "$dev" "$mount_point" 2>>"$LOG_FILE"; then
                     log_message "Mounted $dev to $mount_point."
                 else
                     log_message "Failed to mount $dev."
@@ -126,7 +139,7 @@ find_persistent_storage() {
                 fi
             fi
             if [ -w "$mount_point" ]; then
-                if sudo mkdir -p "$mount_point/tce" 2>/dev/null; then
+                if sudo mkdir -p "$mount_point/tce" 2>>"$LOG_FILE"; then
                     tce_dir="$mount_point/tce"
                     log_message "Created $tce_dir for persistence."
                     break
@@ -304,7 +317,7 @@ find /etc -type f -exec sudo sed -i 's/Tiny Core/Berke0S/g' {} + 2>>"$LOG_FILE" 
 # Step 14: Save changes
 log_message "Saving changes..."
 if ! sudo filetool.sh -b 2>&1 | tee /tmp/filetool.log; then
-    log_message "Error: filetool.sh -b failed. Log output:"
+    log_message "ERROR: filetool.sh -b failed. Log output:"
     cat /tmp/filetool.log >> "$LOG_FILE"
     log_message "Possible causes:"
     log_message "- No writable storage device at $TCE_DIR."
@@ -334,6 +347,5 @@ log_message "Installation complete! Reboot to apply changes."
 log_message "BERKE0S.py will run automatically on startup with Python 3.9."
 log_message "System branding updated to Berke0S where possible."
 log_message "Log file: $LOG_FILE"
-log_message "Run 'sudo reboot' to start using Berke0S."
 echo "Installation complete. Check $LOG_FILE for details."
 echo "Run 'sudo reboot' to apply changes."
