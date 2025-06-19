@@ -1,3 +1,4 @@
+#BERKE0S - A lightweight, customizable desktop environment for TinyCore Linux 2.0 by Berke Oruç
 import os
 import sys
 import time
@@ -133,7 +134,7 @@ def install_packages():
     packages = [
         "python3.9", "tk", "tcl", "python3.9-pip", "alsa", "bluez",
         "e2fsprogs", "nano", "htop", "bash", "tar", "zip", "wireless-tools",
-        "scrot", "libnotify", "espeak", "mpv"
+        "scrot", "libnotify", "espeak", "mpv" , "Xorg"
     ]
     for pkg in packages:
         try:
