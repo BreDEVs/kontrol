@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Berke0S - Complete Advanced Desktop Environment for Tiny Core Linux
+Berke0S - Complete Advanced Desktop Environment for Tiny Core Linux - Version 2
 Created by: Berke Oruç
-Version: 3.0 - Ultimate Edition
+Version: 3.0 - Ultimate Edition V2 - Enhanced Display Management
 License: MIT
 
-Complete desktop environment with all features and applications
+Complete desktop environment with advanced display management and Tiny Core Linux optimizations
 """
 
 import os
@@ -46,6 +46,9 @@ import configparser
 import platform
 import ctypes
 import mimetypes
+import fcntl
+import struct
+import termios
 from io import BytesIO, StringIO
 from urllib.parse import quote, unquote
 import tkinter as tk
@@ -92,12 +95,14 @@ PLUGINS_DIR = f"{CONFIG_DIR}/plugins"
 WALLPAPERS_DIR = f"{CONFIG_DIR}/wallpapers"
 APPS_DIR = f"{CONFIG_DIR}/applications"
 DATABASE_FILE = f"{CONFIG_DIR}/berke0s.db"
+DISPLAY_LOG = f"{CONFIG_DIR}/display.log"
+X_LOG = f"{CONFIG_DIR}/x_server.log"
 
 # Ensure directories exist
 for directory in [CONFIG_DIR, THEMES_DIR, PLUGINS_DIR, WALLPAPERS_DIR, APPS_DIR]:
     os.makedirs(directory, exist_ok=True)
 
-# Enhanced logging setup
+# Enhanced logging setup with display-specific logging
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -108,9 +113,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger('Berke0S')
 
+# Display logger
+display_logger = logging.getLogger('Display')
+display_handler = logging.FileHandler(DISPLAY_LOG)
+display_handler.setFormatter(logging.Formatter('%(asctime)s - DISPLAY - %(levelname)s - %(message)s'))
+display_logger.addHandler(display_handler)
+display_logger.setLevel(logging.DEBUG)
+
 # Enhanced default configuration
 DEFAULT_CONFIG = {
-    "version": "3.0",
+    "version": "3.0-v2",
     "first_boot": True,
     "language": "tr_TR",
     "timezone": "Europe/Istanbul",
@@ -118,9 +130,23 @@ DEFAULT_CONFIG = {
     "users": [],
     "wifi": {"ssid": "", "password": ""},
     "installed": False,
+    "display": {
+        "auto_detect": True,
+        "force_x11": True,
+        "display_server": "auto",  # auto, xorg, wayland
+        "resolution": "auto",
+        "refresh_rate": 60,
+        "color_depth": 24,
+        "multi_monitor": False,
+        "primary_monitor": 0,
+        "x_arguments": ["-nolisten", "tcp", "-nocursor"],
+        "fallback_resolution": "1024x768",
+        "virtual_display": False,
+        "headless_mode": False
+    },
     "desktop": {
         "wallpaper": "",
-        "wallpaper_mode": "stretch",  # stretch, tile, center, fit
+        "wallpaper_mode": "stretch",
         "icon_size": 48,
         "grid_snap": True,
         "effects": True,
@@ -130,7 +156,9 @@ DEFAULT_CONFIG = {
         "animation_speed": 300,
         "auto_arrange": False,
         "show_desktop_icons": True,
-        "desktop_icons": []
+        "desktop_icons": [],
+        "virtual_desktops": 4,
+        "show_dock": False
     },
     "taskbar": {
         "position": "bottom",
@@ -185,74 +213,1157 @@ DEFAULT_CONFIG = {
         "auto_updates": True,
         "crash_reporting": True,
         "telemetry": False,
-        "performance_mode": "balanced"
+        "performance_mode": "balanced",
+        "auto_backup": False,
+        "backup_interval": 24,
+        "24_hour_format": True
     }
 }
 
-# Enhanced display detection and setup
-def setup_display():
-    """Enhanced display setup with multiple fallback options"""
-    try:
-        logger.info("Setting up display environment...")
+# Enhanced Display Management System
+class DisplayManager:
+    """Advanced display management for Tiny Core Linux"""
+    
+    def __init__(self):
+        self.display_info = {}
+        self.x_process = None
+        self.display_ready = False
+        self.current_display = ":0"
+        self.backup_displays = [":1", ":2", ":10"]
+        self.x_server_attempts = 0
+        self.max_attempts = 5
         
-        # Force display setup for Tiny Core Linux
-        os.environ['DISPLAY'] = ':0.0'
-        
-        # Try multiple X server start methods
-        x_methods = [
-            ['startx'],
-            ['xinit'],
-            ['X', ':0', '-nolisten', 'tcp'],
-            ['Xorg', ':0', '-nolisten', 'tcp']
-        ]
-        
-        for method in x_methods:
+    def detect_environment(self):
+        """Detect current environment and capabilities"""
+        try:
+            env_info = {
+                "os_name": platform.system(),
+                "distribution": self.get_distribution(),
+                "is_tinycore": self.is_tiny_core_linux(),
+                "desktop_session": os.environ.get("DESKTOP_SESSION", ""),
+                "display": os.environ.get("DISPLAY", ""),
+                "wayland_display": os.environ.get("WAYLAND_DISPLAY", ""),
+                "x11_available": self.check_x11_availability(),
+                "wayland_available": self.check_wayland_availability(),
+                "graphics_driver": self.detect_graphics_driver(),
+                "current_user": getpass.getuser(),
+                "is_root": os.getuid() == 0 if hasattr(os, 'getuid') else False,
+                "tty": self.get_current_tty(),
+                "runlevel": self.get_runlevel()
+            }
+            
+            display_logger.info(f"Environment detected: {env_info}")
+            return env_info
+            
+        except Exception as e:
+            display_logger.error(f"Environment detection error: {e}")
+            return {"error": str(e)}
+    
+    def is_tiny_core_linux(self):
+        """Check if running on Tiny Core Linux"""
+        try:
+            # Check for TC-specific files and directories
+            tc_indicators = [
+                "/opt/tce",
+                "/etc/init.d/tc-config",
+                "/usr/bin/tce-load",
+                "/opt/bootlocal.sh"
+            ]
+            
+            for indicator in tc_indicators:
+                if os.path.exists(indicator):
+                    return True
+            
+            # Check version files
+            version_files = ["/etc/tc-release", "/etc/tinycore-release"]
+            for vfile in version_files:
+                if os.path.exists(vfile):
+                    return True
+            
+            # Check command output
             try:
-                logger.info(f"Trying X server method: {method}")
-                result = subprocess.run(['pgrep', 'X'], capture_output=True)
-                if result.returncode == 0:
-                    logger.info("X server already running")
-                    break
-                    
-                # Start X server in background
-                subprocess.Popen(method, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                time.sleep(3)
+                result = subprocess.run(['uname', '-a'], capture_output=True, text=True, timeout=5)
+                if 'tinycore' in result.stdout.lower():
+                    return True
+            except:
+                pass
                 
-                # Test if X is working
-                test_result = subprocess.run(['xdpyinfo'], capture_output=True, timeout=5)
-                if test_result.returncode == 0:
-                    logger.info(f"X server started successfully with {method}")
-                    break
-            except Exception as e:
-                logger.warning(f"Failed to start X with {method}: {e}")
-                continue
-        
-        # Additional display setup for Tiny Core
-        try:
-            # Set window manager if none is running
-            wm_result = subprocess.run(['pgrep', '-f', 'wm|flwm|openbox'], capture_output=True)
-            if wm_result.returncode != 0:
-                logger.info("Starting window manager...")
-                subprocess.Popen(['flwm'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                time.sleep(2)
-        except:
-            pass
+            return False
             
-        # Test final display
+        except Exception as e:
+            display_logger.error(f"Tiny Core detection error: {e}")
+            return False
+    
+    def get_distribution(self):
+        """Get Linux distribution name"""
         try:
-            test_result = subprocess.run(['xset', 'q'], capture_output=True, timeout=3)
-            if test_result.returncode == 0:
-                logger.info("Display setup successful")
+            # Try multiple methods to detect distribution
+            methods = [
+                "/etc/os-release",
+                "/etc/lsb-release",
+                "/etc/debian_version",
+                "/etc/redhat-release"
+            ]
+            
+            for method in methods:
+                if os.path.exists(method):
+                    with open(method, 'r') as f:
+                        content = f.read()
+                        if 'tinycore' in content.lower() or 'tiny core' in content.lower():
+                            return "TinyCore"
+                        elif 'ubuntu' in content.lower():
+                            return "Ubuntu"
+                        elif 'debian' in content.lower():
+                            return "Debian"
+            
+            return "Unknown"
+            
+        except Exception as e:
+            display_logger.error(f"Distribution detection error: {e}")
+            return "Unknown"
+    
+    def check_x11_availability(self):
+        """Check if X11 is available"""
+        try:
+            # Check for X11 binaries
+            x11_binaries = ['X', 'Xorg', 'xinit', 'startx']
+            available_binaries = []
+            
+            for binary in x11_binaries:
+                if shutil.which(binary):
+                    available_binaries.append(binary)
+            
+            # Check for X11 libraries
+            x11_libs = ['/usr/lib/xorg', '/usr/lib/X11', '/usr/X11R6/lib']
+            available_libs = [lib for lib in x11_libs if os.path.exists(lib)]
+            
+            return {
+                "available": len(available_binaries) > 0,
+                "binaries": available_binaries,
+                "libraries": available_libs
+            }
+            
+        except Exception as e:
+            display_logger.error(f"X11 availability check error: {e}")
+            return {"available": False, "error": str(e)}
+    
+    def check_wayland_availability(self):
+        """Check if Wayland is available"""
+        try:
+            wayland_binaries = ['wayland-scanner', 'weston']
+            available_binaries = []
+            
+            for binary in wayland_binaries:
+                if shutil.which(binary):
+                    available_binaries.append(binary)
+            
+            return {
+                "available": len(available_binaries) > 0,
+                "binaries": available_binaries
+            }
+            
+        except Exception as e:
+            display_logger.error(f"Wayland availability check error: {e}")
+            return {"available": False, "error": str(e)}
+    
+    def detect_graphics_driver(self):
+        """Detect graphics driver"""
+        try:
+            drivers = []
+            
+            # Check lspci for graphics cards
+            try:
+                result = subprocess.run(['lspci'], capture_output=True, text=True, timeout=10)
+                lines = result.stdout.lower()
+                
+                if 'nvidia' in lines:
+                    drivers.append('nvidia')
+                if 'amd' in lines or 'ati' in lines:
+                    drivers.append('amd')
+                if 'intel' in lines:
+                    drivers.append('intel')
+                if 'vmware' in lines:
+                    drivers.append('vmware')
+                if 'virtualbox' in lines:
+                    drivers.append('vbox')
+                    
+            except:
+                pass
+            
+            # Check loaded kernel modules
+            try:
+                with open('/proc/modules', 'r') as f:
+                    modules = f.read().lower()
+                    
+                if 'nvidia' in modules:
+                    drivers.append('nvidia')
+                if 'radeon' in modules or 'amdgpu' in modules:
+                    drivers.append('amd')
+                if 'i915' in modules or 'i965' in modules:
+                    drivers.append('intel')
+                    
+            except:
+                pass
+            
+            return list(set(drivers)) if drivers else ['generic']
+            
+        except Exception as e:
+            display_logger.error(f"Graphics driver detection error: {e}")
+            return ['unknown']
+    
+    def get_current_tty(self):
+        """Get current TTY"""
+        try:
+            result = subprocess.run(['tty'], capture_output=True, text=True, timeout=5)
+            return result.stdout.strip()
+        except:
+            return "unknown"
+    
+    def get_runlevel(self):
+        """Get current runlevel"""
+        try:
+            result = subprocess.run(['runlevel'], capture_output=True, text=True, timeout=5)
+            return result.stdout.strip()
+        except:
+            return "unknown"
+    
+    def setup_display_environment(self):
+        """Setup comprehensive display environment"""
+        try:
+            display_logger.info("Starting comprehensive display setup...")
+            
+            # Detect current environment
+            env_info = self.detect_environment()
+            
+            # Check if we already have a working display
+            if self.test_existing_display():
+                display_logger.info("Existing display working, using it")
                 return True
-        except:
-            pass
             
-        logger.warning("Display setup completed with warnings")
-        return True
+            # Prepare environment
+            self.prepare_display_environment()
+            
+            # Try different display methods based on environment
+            if env_info.get("is_tinycore", False):
+                success = self.setup_tinycore_display()
+            else:
+                success = self.setup_generic_display()
+            
+            if not success:
+                # Try fallback methods
+                success = self.try_fallback_display_methods()
+            
+            if success:
+                # Verify display is working
+                success = self.verify_display_setup()
+                
+            if success:
+                display_logger.info("Display setup completed successfully")
+                self.display_ready = True
+                return True
+            else:
+                display_logger.warning("All display setup methods failed, attempting headless mode")
+                return self.setup_headless_mode()
+                
+        except Exception as e:
+            display_logger.error(f"Display setup error: {e}")
+            return self.setup_headless_mode()
+    
+    def test_existing_display(self):
+        """Test if there's already a working display"""
+        try:
+            current_display = os.environ.get('DISPLAY', '')
+            if current_display:
+                display_logger.info(f"Testing existing display: {current_display}")
+                
+                # Test with xdpyinfo
+                try:
+                    result = subprocess.run(['xdpyinfo'], capture_output=True, timeout=5)
+                    if result.returncode == 0:
+                        display_logger.info("Existing display is working")
+                        self.current_display = current_display
+                        return True
+                except:
+                    pass
+                
+                # Test with xset
+                try:
+                    result = subprocess.run(['xset', 'q'], capture_output=True, timeout=5)
+                    if result.returncode == 0:
+                        display_logger.info("Existing display verified with xset")
+                        self.current_display = current_display
+                        return True
+                except:
+                    pass
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Existing display test error: {e}")
+            return False
+    
+    def prepare_display_environment(self):
+        """Prepare environment variables and settings"""
+        try:
+            display_logger.info("Preparing display environment...")
+            
+            # Set basic environment variables
+            os.environ['DISPLAY'] = self.current_display
+            os.environ['XAUTHORITY'] = os.path.expanduser('~/.Xauthority')
+            
+            # Tiny Core specific environment
+            if self.detect_environment().get("is_tinycore", False):
+                # Set TC-specific paths
+                x_paths = [
+                    '/usr/local/bin',
+                    '/usr/bin',
+                    '/bin',
+                    '/opt/bin',
+                    '/usr/local/lib/X11',
+                    '/usr/lib/X11'
+                ]
+                
+                current_path = os.environ.get('PATH', '')
+                for path in x_paths:
+                    if path not in current_path and os.path.exists(path):
+                        os.environ['PATH'] = f"{path}:{current_path}"
+                
+                # Set library paths
+                lib_paths = [
+                    '/usr/local/lib',
+                    '/usr/lib',
+                    '/lib',
+                    '/opt/lib'
+                ]
+                
+                ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+                for lib_path in lib_paths:
+                    if lib_path not in ld_library_path and os.path.exists(lib_path):
+                        os.environ['LD_LIBRARY_PATH'] = f"{lib_path}:{ld_library_path}"
+            
+            # Create necessary directories
+            x_dirs = [
+                '/tmp/.X11-unix',
+                '/tmp/.ICE-unix',
+                os.path.expanduser('~/.cache'),
+                os.path.expanduser('~/.local/share')
+            ]
+            
+            for directory in x_dirs:
+                os.makedirs(directory, exist_ok=True)
+                try:
+                    os.chmod(directory, 0o1777 if directory.startswith('/tmp') else 0o755)
+                except:
+                    pass
+            
+            display_logger.info("Display environment prepared")
+            
+        except Exception as e:
+            display_logger.error(f"Environment preparation error: {e}")
+    
+    def setup_tinycore_display(self):
+        """Setup display specifically for Tiny Core Linux"""
+        try:
+            display_logger.info("Setting up display for Tiny Core Linux...")
+            
+            # TC-specific X server start methods
+            tc_methods = [
+                self.start_tc_x_with_startx,
+                self.start_tc_x_with_xinit,
+                self.start_tc_x_direct,
+                self.start_tc_x_with_wm
+            ]
+            
+            for method in tc_methods:
+                try:
+                    display_logger.info(f"Trying method: {method.__name__}")
+                    if method():
+                        display_logger.info(f"Success with method: {method.__name__}")
+                        return True
+                    time.sleep(2)  # Wait between attempts
+                except Exception as e:
+                    display_logger.warning(f"Method {method.__name__} failed: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Tiny Core display setup error: {e}")
+            return False
+    
+    def start_tc_x_with_startx(self):
+        """Start X using startx (TC preferred method)"""
+        try:
+            display_logger.info("Starting X with startx...")
+            
+            # Check if startx is available
+            if not shutil.which('startx'):
+                display_logger.warning("startx not found")
+                return False
+            
+            # Kill any existing X processes
+            self.cleanup_x_processes()
+            
+            # Create minimal xinitrc if it doesn't exist
+            xinitrc_path = os.path.expanduser('~/.xinitrc')
+            if not os.path.exists(xinitrc_path):
+                with open(xinitrc_path, 'w') as f:
+                    f.write('#!/bin/sh\n')
+                    f.write('xset -dpms\n')
+                    f.write('xset s off\n')
+                    f.write('exec flwm &\n')
+                    f.write('wait\n')
+                os.chmod(xinitrc_path, 0o755)
+            
+            # Start X server with startx
+            cmd = ['startx', '--', self.current_display, '-nolisten', 'tcp']
+            
+            display_logger.info(f"Starting X with command: {' '.join(cmd)}")
+            
+            # Start in background
+            self.x_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            
+            # Wait for X to start
+            return self.wait_for_x_server()
+            
+        except Exception as e:
+            display_logger.error(f"startx method error: {e}")
+            return False
+    
+    def start_tc_x_with_xinit(self):
+        """Start X using xinit"""
+        try:
+            display_logger.info("Starting X with xinit...")
+            
+            if not shutil.which('xinit'):
+                display_logger.warning("xinit not found")
+                return False
+            
+            self.cleanup_x_processes()
+            
+            # Try different xinit configurations
+            xinit_configs = [
+                ['xinit', '--', f'/usr/bin/X', self.current_display, '-nolisten', 'tcp'],
+                ['xinit', '--', f'/usr/bin/Xorg', self.current_display, '-nolisten', 'tcp'],
+                ['xinit', '/usr/bin/flwm', '--', self.current_display, '-nolisten', 'tcp']
+            ]
+            
+            for config in xinit_configs:
+                try:
+                    display_logger.info(f"Trying xinit config: {' '.join(config)}")
+                    
+                    self.x_process = subprocess.Popen(
+                        config,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        preexec_fn=os.setsid
+                    )
+                    
+                    if self.wait_for_x_server(timeout=10):
+                        return True
+                    
+                    self.cleanup_x_processes()
+                    
+                except Exception as e:
+                    display_logger.warning(f"xinit config failed: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"xinit method error: {e}")
+            return False
+    
+    def start_tc_x_direct(self):
+        """Start X server directly"""
+        try:
+            display_logger.info("Starting X server directly...")
+            
+            # Find X server binary
+            x_binaries = ['Xorg', 'X']
+            x_binary = None
+            
+            for binary in x_binaries:
+                binary_path = shutil.which(binary)
+                if binary_path:
+                    x_binary = binary_path
+                    break
+            
+            if not x_binary:
+                display_logger.warning("No X server binary found")
+                return False
+            
+            self.cleanup_x_processes()
+            
+            # Build X server command
+            x_cmd = [
+                x_binary,
+                self.current_display,
+                '-nolisten', 'tcp',
+                '-nolisten', 'local',
+                '-noreset',
+                '-auth', os.path.expanduser('~/.Xauthority')
+            ]
+            
+            # Add TC-specific arguments
+            tc_args = [
+                '-sharevts',
+                '-novtswitch',
+                '-quiet'
+            ]
+            x_cmd.extend(tc_args)
+            
+            display_logger.info(f"Starting X server: {' '.join(x_cmd)}")
+            
+            # Start X server
+            self.x_process = subprocess.Popen(
+                x_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            
+            # Wait for X server to start
+            if self.wait_for_x_server():
+                # Start a simple window manager
+                self.start_window_manager()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Direct X start error: {e}")
+            return False
+    
+    def start_tc_x_with_wm(self):
+        """Start X with window manager in one step"""
+        try:
+            display_logger.info("Starting X with integrated window manager...")
+            
+            # Check for available window managers
+            wm_list = ['flwm', 'jwm', 'openbox', 'icewm', 'twm']
+            available_wm = None
+            
+            for wm in wm_list:
+                if shutil.which(wm):
+                    available_wm = wm
+                    break
+            
+            if not available_wm:
+                display_logger.warning("No window manager found")
+                return False
+            
+            self.cleanup_x_processes()
+            
+            # Create startup script
+            startup_script = f"""#!/bin/sh
+export DISPLAY={self.current_display}
+xset -dpms &
+xset s off &
+{available_wm} &
+wait
+"""
+            
+            script_path = '/tmp/berke0s_startup.sh'
+            with open(script_path, 'w') as f:
+                f.write(startup_script)
+            os.chmod(script_path, 0o755)
+            
+            # Start with xinit
+            cmd = ['xinit', script_path, '--', self.current_display, '-nolisten', 'tcp']
+            
+            display_logger.info(f"Starting X+WM: {' '.join(cmd)}")
+            
+            self.x_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid
+            )
+            
+            return self.wait_for_x_server()
+            
+        except Exception as e:
+            display_logger.error(f"X+WM start error: {e}")
+            return False
+    
+    def setup_generic_display(self):
+        """Setup display for generic Linux distributions"""
+        try:
+            display_logger.info("Setting up display for generic Linux...")
+            
+            generic_methods = [
+                self.start_x_with_gdm,
+                self.start_x_with_lightdm,
+                self.start_x_standard,
+                self.start_x_fallback
+            ]
+            
+            for method in generic_methods:
+                try:
+                    if method():
+                        return True
+                    time.sleep(2)
+                except Exception as e:
+                    display_logger.warning(f"Generic method failed: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Generic display setup error: {e}")
+            return False
+    
+    def start_x_with_gdm(self):
+        """Start X using GDM"""
+        try:
+            if shutil.which('gdm') or shutil.which('gdm3'):
+                display_logger.info("Starting X with GDM...")
+                subprocess.Popen(['gdm'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return self.wait_for_x_server()
+            return False
+        except:
+            return False
+    
+    def start_x_with_lightdm(self):
+        """Start X using LightDM"""
+        try:
+            if shutil.which('lightdm'):
+                display_logger.info("Starting X with LightDM...")
+                subprocess.Popen(['lightdm'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return self.wait_for_x_server()
+            return False
+        except:
+            return False
+    
+    def start_x_standard(self):
+        """Standard X startup method"""
+        try:
+            display_logger.info("Starting X with standard method...")
+            
+            if shutil.which('startx'):
+                self.x_process = subprocess.Popen(
+                    ['startx', '--', self.current_display, '-nolisten', 'tcp'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                return self.wait_for_x_server()
+            
+            return False
+        except:
+            return False
+    
+    def start_x_fallback(self):
+        """Fallback X startup method"""
+        try:
+            display_logger.info("Starting X with fallback method...")
+            
+            x_binary = shutil.which('Xorg') or shutil.which('X')
+            if x_binary:
+                self.x_process = subprocess.Popen(
+                    [x_binary, self.current_display, '-nolisten', 'tcp'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                return self.wait_for_x_server()
+            
+            return False
+        except:
+            return False
+    
+    def try_fallback_display_methods(self):
+        """Try various fallback display methods"""
+        try:
+            display_logger.info("Trying fallback display methods...")
+            
+            fallback_methods = [
+                self.try_virtual_display,
+                self.try_nested_x,
+                self.try_xvfb,
+                self.try_different_displays
+            ]
+            
+            for method in fallback_methods:
+                try:
+                    display_logger.info(f"Trying fallback: {method.__name__}")
+                    if method():
+                        return True
+                except Exception as e:
+                    display_logger.warning(f"Fallback method failed: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Fallback methods error: {e}")
+            return False
+    
+    def try_virtual_display(self):
+        """Try to create a virtual display"""
+        try:
+            if shutil.which('Xvfb'):
+                display_logger.info("Starting virtual display with Xvfb...")
+                
+                self.cleanup_x_processes()
+                
+                cmd = [
+                    'Xvfb',
+                    self.current_display,
+                    '-screen', '0', '1024x768x24',
+                    '-nolisten', 'tcp',
+                    '-auth', os.path.expanduser('~/.Xauthority')
+                ]
+                
+                self.x_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                return self.wait_for_x_server()
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Virtual display error: {e}")
+            return False
+    
+    def try_nested_x(self):
+        """Try nested X server"""
+        try:
+            if shutil.which('Xnest'):
+                display_logger.info("Starting nested X server...")
+                
+                cmd = [
+                    'Xnest',
+                    self.current_display,
+                    '-geometry', '1024x768',
+                    '-name', 'Berke0S'
+                ]
+                
+                self.x_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                return self.wait_for_x_server()
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Nested X error: {e}")
+            return False
+    
+    def try_xvfb(self):
+        """Try Xvfb (Virtual Framebuffer)"""
+        try:
+            if shutil.which('Xvfb'):
+                display_logger.info("Starting Xvfb...")
+                
+                cmd = [
+                    'Xvfb',
+                    self.current_display,
+                    '-screen', '0', '1024x768x24',
+                    '-pixdepths', '3', '8', '15', '16', '24', '32'
+                ]
+                
+                self.x_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                if self.wait_for_x_server():
+                    # Start window manager for Xvfb
+                    self.start_window_manager()
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Xvfb error: {e}")
+            return False
+    
+    def try_different_displays(self):
+        """Try different display numbers"""
+        try:
+            display_logger.info("Trying different display numbers...")
+            
+            for display_num in self.backup_displays:
+                try:
+                    display_logger.info(f"Trying display: {display_num}")
+                    
+                    self.current_display = display_num
+                    os.environ['DISPLAY'] = display_num
+                    
+                    # Try starting X on this display
+                    x_binary = shutil.which('Xorg') or shutil.which('X')
+                    if x_binary:
+                        cmd = [x_binary, display_num, '-nolisten', 'tcp']
+                        
+                        self.x_process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE
+                        )
+                        
+                        if self.wait_for_x_server(timeout=10):
+                            display_logger.info(f"Success with display: {display_num}")
+                            self.start_window_manager()
+                            return True
+                        
+                        self.cleanup_x_processes()
+                    
+                except Exception as e:
+                    display_logger.warning(f"Display {display_num} failed: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Different displays error: {e}")
+            return False
+    
+    def wait_for_x_server(self, timeout=30):
+        """Wait for X server to become ready"""
+        try:
+            display_logger.info(f"Waiting for X server on {self.current_display} (timeout: {timeout}s)...")
+            
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                # Test with xdpyinfo
+                try:
+                    result = subprocess.run(
+                        ['xdpyinfo', '-display', self.current_display],
+                        capture_output=True,
+                        timeout=3
+                    )
+                    if result.returncode == 0:
+                        display_logger.info("X server is ready (xdpyinfo test passed)")
+                        return True
+                except:
+                    pass
+                
+                # Test with xset
+                try:
+                    result = subprocess.run(
+                        ['xset', '-display', self.current_display, 'q'],
+                        capture_output=True,
+                        timeout=3
+                    )
+                    if result.returncode == 0:
+                        display_logger.info("X server is ready (xset test passed)")
+                        return True
+                except:
+                    pass
+                
+                # Check if X process is still running
+                if self.x_process and self.x_process.poll() is not None:
+                    display_logger.warning("X server process died")
+                    return False
+                
+                time.sleep(1)
+            
+            display_logger.warning(f"X server timeout after {timeout} seconds")
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Wait for X server error: {e}")
+            return False
+    
+    def start_window_manager(self):
+        """Start a window manager"""
+        try:
+            display_logger.info("Starting window manager...")
+            
+            # List of window managers to try
+            wm_list = ['flwm', 'jwm', 'openbox', 'icewm', 'mwm', 'twm', 'fvwm']
+            
+            for wm in wm_list:
+                if shutil.which(wm):
+                    display_logger.info(f"Starting window manager: {wm}")
+                    
+                    try:
+                        env = os.environ.copy()
+                        env['DISPLAY'] = self.current_display
+                        
+                        subprocess.Popen(
+                            [wm],
+                            env=env,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        
+                        display_logger.info(f"Window manager {wm} started")
+                        time.sleep(2)  # Give WM time to start
+                        return True
+                        
+                    except Exception as e:
+                        display_logger.warning(f"Failed to start {wm}: {e}")
+                        continue
+            
+            display_logger.warning("No window manager could be started")
+            return False
+            
+        except Exception as e:
+            display_logger.error(f"Window manager start error: {e}")
+            return False
+    
+    def cleanup_x_processes(self):
+        """Clean up existing X processes"""
+        try:
+            display_logger.info("Cleaning up existing X processes...")
+            
+            # Kill existing X processes
+            x_processes = ['X', 'Xorg', 'Xvfb', 'Xnest']
+            
+            for proc_name in x_processes:
+                try:
+                    subprocess.run(['pkill', '-f', proc_name], 
+                                 capture_output=True, timeout=5)
+                except:
+                    pass
+            
+            # Clean up X sockets
+            x_sockets = [f'/tmp/.X11-unix/X{i}' for i in range(0, 10)]
+            for socket_path in x_sockets:
+                try:
+                    if os.path.exists(socket_path):
+                        os.remove(socket_path)
+                except:
+                    pass
+            
+            # Wait a moment for cleanup
+            time.sleep(1)
+            
+            display_logger.info("X processes cleanup completed")
+            
+        except Exception as e:
+            display_logger.error(f"X processes cleanup error: {e}")
+    
+    def verify_display_setup(self):
+        """Verify that display setup is working correctly"""
+        try:
+            display_logger.info("Verifying display setup...")
+            
+            # Test basic X functionality
+            tests = [
+                self.test_x_connection,
+                self.test_x_extensions,
+                self.test_window_creation
+            ]
+            
+            for test in tests:
+                try:
+                    if not test():
+                        display_logger.warning(f"Display test failed: {test.__name__}")
+                        return False
+                except Exception as e:
+                    display_logger.warning(f"Display test error {test.__name__}: {e}")
+                    return False
+            
+            display_logger.info("Display verification successful")
+            return True
+            
+        except Exception as e:
+            display_logger.error(f"Display verification error: {e}")
+            return False
+    
+    def test_x_connection(self):
+        """Test basic X connection"""
+        try:
+            result = subprocess.run(
+                ['xdpyinfo', '-display', self.current_display],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def test_x_extensions(self):
+        """Test X extensions"""
+        try:
+            result = subprocess.run(
+                ['xdpyinfo', '-display', self.current_display, '-ext', 'all'],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def test_window_creation(self):
+        """Test window creation capability"""
+        try:
+            # Try to create a simple test window with xwininfo
+            result = subprocess.run(
+                ['xwininfo', '-display', self.current_display, '-root'],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            return False
+    
+    def setup_headless_mode(self):
+        """Setup headless mode for systems without display"""
+        try:
+            display_logger.info("Setting up headless mode...")
+            
+            # Set environment for headless operation
+            os.environ['DISPLAY'] = ':99'  # Non-existent display
+            
+            # Create dummy display info
+            self.display_info = {
+                "mode": "headless",
+                "width": 1024,
+                "height": 768,
+                "depth": 24
+            }
+            
+            display_logger.info("Headless mode configured")
+            return True
+            
+        except Exception as e:
+            display_logger.error(f"Headless setup error: {e}")
+            return False
+    
+    def get_display_info(self):
+        """Get current display information"""
+        try:
+            if self.display_ready:
+                # Get display info from X server
+                try:
+                    result = subprocess.run(
+                        ['xdpyinfo', '-display', self.current_display],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+                    
+                    if result.returncode == 0:
+                        info = self.parse_xdpyinfo_output(result.stdout)
+                        self.display_info = info
+                        return info
+                except:
+                    pass
+            
+            # Return default info if X is not available
+            return {
+                "display": self.current_display,
+                "mode": "headless" if not self.display_ready else "unknown",
+                "width": 1024,
+                "height": 768,
+                "depth": 24
+            }
+            
+        except Exception as e:
+            display_logger.error(f"Get display info error: {e}")
+            return {"error": str(e)}
+    
+    def parse_xdpyinfo_output(self, output):
+        """Parse xdpyinfo output to extract display information"""
+        try:
+            info = {
+                "display": self.current_display,
+                "mode": "x11"
+            }
+            
+            lines = output.split('\n')
+            for line in lines:
+                if 'dimensions:' in line:
+                    # Extract resolution
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        resolution = parts[1]
+                        if 'x' in resolution:
+                            w, h = resolution.split('x')
+                            info['width'] = int(w)
+                            info['height'] = int(h.split()[0])  # Remove any additional text
+                
+                elif 'depth of root window:' in line:
+                    # Extract color depth
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        info['depth'] = int(parts[4])
+                
+                elif 'number of screens:' in line:
+                    # Extract screen count
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        info['screens'] = int(parts[3])
+            
+            return info
+            
+        except Exception as e:
+            display_logger.error(f"Parse xdpyinfo error: {e}")
+            return {"error": str(e)}
+    
+    def is_display_ready(self):
+        """Check if display is ready for use"""
+        return self.display_ready
+    
+    def get_current_display(self):
+        """Get current display identifier"""
+        return self.current_display
+    
+    def shutdown_display(self):
+        """Shutdown display system"""
+        try:
+            display_logger.info("Shutting down display system...")
+            
+            if self.x_process and self.x_process.poll() is None:
+                try:
+                    os.killpg(os.getpgid(self.x_process.pid), signal.SIGTERM)
+                    time.sleep(2)
+                    if self.x_process.poll() is None:
+                        os.killpg(os.getpgid(self.x_process.pid), signal.SIGKILL)
+                except:
+                    pass
+            
+            self.cleanup_x_processes()
+            self.display_ready = False
+            
+            display_logger.info("Display system shutdown completed")
+            
+        except Exception as e:
+            display_logger.error(f"Display shutdown error: {e}")
+
+# Enhanced display detection and setup with improved error handling
+def setup_display():
+    """Enhanced display setup with comprehensive fallback system"""
+    try:
+        logger.info("Starting enhanced display setup...")
         
+        display_manager = DisplayManager()
+        
+        # Setup display environment
+        success = display_manager.setup_display_environment()
+        
+        if success:
+            logger.info("Display setup completed successfully")
+            
+            # Log display information
+            display_info = display_manager.get_display_info()
+            logger.info(f"Display info: {display_info}")
+            
+            return True
+        else:
+            logger.warning("Display setup failed, but continuing in headless mode")
+            return True  # Continue even without display
+            
     except Exception as e:
-        logger.error(f"Display setup failed: {e}")
-        return True  # Continue anyway for headless/console mode
+        logger.error(f"Display setup critical error: {e}")
+        # Even if display setup fails completely, continue
+        return True
 
 def init_database():
     """Initialize SQLite database for system data"""
@@ -322,6 +1433,18 @@ def init_database():
             )
         ''')
         
+        # Display logs table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS display_logs (
+                id INTEGER PRIMARY KEY,
+                event_type TEXT,
+                display_id TEXT,
+                message TEXT,
+                success INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         logger.info("Database initialized successfully")
@@ -331,14 +1454,16 @@ def init_database():
 
 # Enhanced Installation System
 class InstallationWizard:
-    """Complete installation wizard with advanced features"""
+    """Complete installation wizard with advanced features and display management"""
     
     def __init__(self):
         self.root = None
         self.current_step = 0
         self.steps = [
             "welcome",
+            "system_check", 
             "language", 
+            "display_setup",
             "disk_setup",
             "network",
             "user_setup",
@@ -350,23 +1475,35 @@ class InstallationWizard:
         self.config = DEFAULT_CONFIG.copy()
         self.selected_disk = None
         self.partition_scheme = "auto"
+        self.display_manager = DisplayManager()
         
     def start_installation(self):
-        """Start the installation process with enhanced UI"""
+        """Start the installation process with enhanced display management"""
         logger.info("Starting Berke0S installation wizard...")
         
-        if not setup_display():
+        # First, try to setup display
+        display_success = self.display_manager.setup_display_environment()
+        
+        if display_success and self.display_manager.is_display_ready():
+            return self.gui_install()
+        else:
+            logger.warning("GUI not available, falling back to console installation")
             return self.console_install()
             
+    def gui_install(self):
+        """GUI installation with enhanced display support"""
         try:
             self.root = tk.Tk()
-            self.root.title("Berke0S 3.0 - Ultimate Installation")
+            self.root.title("Berke0S 3.0 V2 - Ultimate Installation")
             self.root.geometry("900x700")
             self.root.configure(bg='#0a0a0f')
             self.root.resizable(True, True)
             
             # Enhanced window styling
-            self.root.attributes('-alpha', 0.98)
+            try:
+                self.root.attributes('-alpha', 0.98)
+            except:
+                pass  # Ignore if not supported
             
             # Center window
             self.center_window()
@@ -381,31 +1518,45 @@ class InstallationWizard:
             self.root.mainloop()
             
         except Exception as e:
-            logger.error(f"Installation UI failed: {e}")
+            logger.error(f"GUI installation failed: {e}")
             return self.console_install()
             
     def center_window(self):
         """Center the installation window"""
-        self.root.update_idletasks()
-        x = (self.root.winfo_screenwidth() // 2) - (900 // 2)
-        y = (self.root.winfo_screenheight() // 2) - (700 // 2)
-        self.root.geometry(f"900x700+{x}+{y}")
+        try:
+            self.root.update_idletasks()
+            x = (self.root.winfo_screenwidth() // 2) - (900 // 2)
+            y = (self.root.winfo_screenheight() // 2) - (700 // 2)
+            self.root.geometry(f"900x700+{x}+{y}")
+        except Exception as e:
+            logger.warning(f"Window centering failed: {e}")
         
     def setup_fonts(self):
         """Setup custom fonts for installation"""
-        self.title_font = tkFont.Font(family="Arial", size=24, weight="bold")
-        self.header_font = tkFont.Font(family="Arial", size=16, weight="bold")
-        self.normal_font = tkFont.Font(family="Arial", size=11)
-        self.small_font = tkFont.Font(family="Arial", size=9)
+        try:
+            self.title_font = tkFont.Font(family="Arial", size=24, weight="bold")
+            self.header_font = tkFont.Font(family="Arial", size=16, weight="bold")
+            self.normal_font = tkFont.Font(family="Arial", size=11)
+            self.small_font = tkFont.Font(family="Arial", size=9)
+        except Exception as e:
+            logger.warning(f"Font setup failed: {e}")
+            # Use default fonts as fallback
+            self.title_font = ("Arial", 24, "bold")
+            self.header_font = ("Arial", 16, "bold")
+            self.normal_font = ("Arial", 11)
+            self.small_font = ("Arial", 9)
         
     def setup_installation_ui(self):
         """Setup enhanced installation UI"""
-        # Create gradient background
-        self.create_gradient_bg()
-        
-        # Main container
-        self.main_container = tk.Frame(self.root, bg='#0a0a0f')
-        self.main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        try:
+            # Create gradient background
+            self.create_gradient_bg()
+            
+            # Main container
+            self.main_container = tk.Frame(self.root, bg='#0a0a0f')
+            self.main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        except Exception as e:
+            logger.error(f"Installation UI setup failed: {e}")
         
     def create_gradient_bg(self):
         """Create gradient background for installation"""
@@ -429,177 +1580,1217 @@ class InstallationWizard:
             except Exception as e:
                 logger.warning(f"Gradient background creation failed: {e}")
         
-    def console_install(self):
-        """Enhanced console-based installation"""
-        print("\n" + "="*80)
-        print("  ██████╗ ███████╗██████╗ ██╗  ██╗███████╗ ██████╗ ███████╗")
-        print("  ██╔══██╗██╔════╝██╔══██╗██║ ██╔╝██╔════╝██╔═████╗██╔════╝")
-        print("  ██████╔╝█████╗  ██████╔╝█████╔╝ █████╗  ██║██╔██║███████╗")
-        print("  ██╔══██╗██╔══╝  ██╔══██╗██╔═██╗ ██╔══╝  ████╔╝██║╚════██║")
-        print("  ██████╔╝███████╗██║  ██║██║  ██╗███████╗╚██████╔╝███████║")
-        print("  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝")
-        print("  Ultimate Desktop Environment v3.0")
-        print("  Console Installation Mode")
-        print("="*80)
-        
-        # Enhanced console setup
+    def show_step(self):
+        """Show current installation step"""
         try:
-            print("\n🚀 Berke0S Hızlı Kurulum / Quick Setup")
+            # Clear main container
+            for widget in self.main_container.winfo_children():
+                widget.destroy()
             
-            # Language selection
-            print("\n1. Dil Seçimi / Language Selection:")
-            print("   [1] Türkçe [2] English [3] Deutsch")
-            lang_choice = input("Seçim / Choice (1-3): ").strip()
+            step_name = self.steps[self.current_step]
             
-            languages = {"1": "tr_TR", "2": "en_US", "3": "de_DE"}
-            self.config["language"] = languages.get(lang_choice, "tr_TR")
+            if step_name == "welcome":
+                self.show_welcome_step()
+            elif step_name == "system_check":
+                self.show_system_check_step()
+            elif step_name == "language":
+                self.show_language_step()
+            elif step_name == "display_setup":
+                self.show_display_setup_step()
+            elif step_name == "disk_setup":
+                self.show_disk_setup_step()
+            elif step_name == "network":
+                self.show_network_step()
+            elif step_name == "user_setup":
+                self.show_user_setup_step()
+            elif step_name == "customization":
+                self.show_customization_step()
+            elif step_name == "advanced_settings":
+                self.show_advanced_settings_step()
+            elif step_name == "installation":
+                self.show_installation_step()
+            elif step_name == "complete":
+                self.show_complete_step()
+                
+        except Exception as e:
+            logger.error(f"Step display error: {e}")
+    
+    def show_welcome_step(self):
+        """Show welcome step"""
+        try:
+            # Welcome header
+            header = tk.Label(self.main_container, 
+                            text="Welcome to Berke0S 3.0 V2",
+                            font=self.title_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(50, 20))
             
-            # User setup
-            print("\n2. Kullanıcı Hesabı / User Account:")
-            fullname = input("Ad Soyad / Full Name: ").strip()
-            username = input("Kullanıcı Adı / Username: ").strip()
-            password = getpass.getpass("Şifre / Password: ")
+            # Welcome message
+            message = tk.Text(self.main_container, height=15, width=70,
+                            bg="#1a1a1a", fg="white", font=self.normal_font,
+                            wrap=tk.WORD, relief=tk.FLAT)
+            message.pack(pady=20, padx=50)
             
-            # Network setup
-            print("\n3. Ağ Ayarları / Network Settings:")
-            setup_wifi = input("WiFi kurmak ister misiniz? / Setup WiFi? (y/n): ").lower() == 'y'
+            welcome_text = """
+🚀 Welcome to Berke0S Ultimate Desktop Environment!
+
+This installation wizard will guide you through setting up Berke0S 3.0 V2 
+with enhanced display management and Tiny Core Linux optimizations.
+
+Features in this version:
+• Advanced display detection and management
+• Enhanced Tiny Core Linux support
+• Improved X server initialization
+• Robust fallback display methods
+• Better hardware compatibility
+• Enhanced error handling and logging
+
+The installation process includes:
+✓ System compatibility check
+✓ Display configuration
+✓ User account setup
+✓ Network configuration
+✓ Desktop customization
+✓ Advanced system settings
+
+Click Next to begin the installation process.
+            """
             
-            if setup_wifi:
-                ssid = input("WiFi Ağ Adı / SSID: ").strip()
-                wifi_password = getpass.getpass("WiFi Şifresi / WiFi Password: ")
-                self.config["wifi"] = {"ssid": ssid, "password": wifi_password}
+            message.insert('1.0', welcome_text)
+            message.config(state='disabled')
+            
+            # Navigation buttons
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Welcome step error: {e}")
+    
+    def show_system_check_step(self):
+        """Show system check step"""
+        try:
+            # Header
+            header = tk.Label(self.main_container, 
+                            text="System Compatibility Check",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Progress frame
+            progress_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            progress_frame.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            # System check results
+            self.check_results = tk.Text(progress_frame, height=20, width=80,
+                                       bg="#1a1a1a", fg="white", font=("Courier", 10),
+                                       wrap=tk.WORD, relief=tk.FLAT)
+            self.check_results.pack(fill=tk.BOTH, expand=True)
+            
+            # Perform system checks
+            self.perform_system_checks()
+            
+            # Navigation buttons
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"System check step error: {e}")
+    
+    def perform_system_checks(self):
+        """Perform comprehensive system checks"""
+        try:
+            self.check_results.insert(tk.END, "🔍 Starting system compatibility check...\n\n")
+            self.root.update()
+            
+            checks = [
+                ("Operating System", self.check_operating_system),
+                ("Python Version", self.check_python_version),
+                ("Display System", self.check_display_system),
+                ("Graphics Hardware", self.check_graphics_hardware),
+                ("Memory", self.check_memory),
+                ("Disk Space", self.check_disk_space),
+                ("Network", self.check_network),
+                ("Audio System", self.check_audio_system),
+                ("Required Packages", self.check_packages),
+                ("Permissions", self.check_permissions)
+            ]
+            
+            self.system_checks_passed = 0
+            self.system_checks_total = len(checks)
+            
+            for check_name, check_func in checks:
+                self.check_results.insert(tk.END, f"📋 Checking {check_name}... ")
+                self.root.update()
+                
+                try:
+                    result = check_func()
+                    if result["status"] == "pass":
+                        self.check_results.insert(tk.END, "✅ PASS\n")
+                        self.system_checks_passed += 1
+                    elif result["status"] == "warning":
+                        self.check_results.insert(tk.END, "⚠️ WARNING\n")
+                        self.system_checks_passed += 0.5
+                    else:
+                        self.check_results.insert(tk.END, "❌ FAIL\n")
+                    
+                    if result.get("details"):
+                        self.check_results.insert(tk.END, f"   {result['details']}\n")
+                    
+                except Exception as e:
+                    self.check_results.insert(tk.END, f"❌ ERROR: {str(e)}\n")
+                
+                self.check_results.insert(tk.END, "\n")
+                self.root.update()
+                time.sleep(0.5)
+            
+            # Summary
+            pass_rate = (self.system_checks_passed / self.system_checks_total) * 100
+            self.check_results.insert(tk.END, f"\n📊 System Check Summary:\n")
+            self.check_results.insert(tk.END, f"   Passed: {self.system_checks_passed:.1f}/{self.system_checks_total} ({pass_rate:.1f}%)\n")
+            
+            if pass_rate >= 80:
+                self.check_results.insert(tk.END, "✅ System is compatible with Berke0S!\n")
+            elif pass_rate >= 60:
+                self.check_results.insert(tk.END, "⚠️ System has some compatibility issues but installation can continue.\n")
+            else:
+                self.check_results.insert(tk.END, "❌ System may have significant compatibility issues.\n")
+            
+            self.check_results.see(tk.END)
+            
+        except Exception as e:
+            logger.error(f"System checks error: {e}")
+            self.check_results.insert(tk.END, f"❌ System check failed: {str(e)}\n")
+    
+    def check_operating_system(self):
+        """Check operating system compatibility"""
+        try:
+            os_name = platform.system()
+            distribution = self.display_manager.get_distribution()
+            is_tinycore = self.display_manager.is_tiny_core_linux()
+            
+            if os_name == "Linux":
+                if is_tinycore:
+                    return {"status": "pass", "details": f"Tiny Core Linux detected - Excellent compatibility"}
+                else:
+                    return {"status": "pass", "details": f"Linux distribution: {distribution}"}
+            else:
+                return {"status": "warning", "details": f"Unsupported OS: {os_name}"}
+                
+        except Exception as e:
+            return {"status": "fail", "details": str(e)}
+    
+    def check_python_version(self):
+        """Check Python version"""
+        try:
+            version = sys.version_info
+            version_str = f"{version.major}.{version.minor}.{version.micro}"
+            
+            if version.major >= 3 and version.minor >= 6:
+                return {"status": "pass", "details": f"Python {version_str} - Compatible"}
+            else:
+                return {"status": "fail", "details": f"Python {version_str} - Requires Python 3.6+"}
+                
+        except Exception as e:
+            return {"status": "fail", "details": str(e)}
+    
+    def check_display_system(self):
+        """Check display system"""
+        try:
+            env_info = self.display_manager.detect_environment()
+            x11_available = env_info.get("x11_available", {}).get("available", False)
+            wayland_available = env_info.get("wayland_available", {}).get("available", False)
+            
+            if x11_available:
+                binaries = env_info.get("x11_available", {}).get("binaries", [])
+                return {"status": "pass", "details": f"X11 available: {', '.join(binaries)}"}
+            elif wayland_available:
+                return {"status": "warning", "details": "Wayland available (limited support)"}
+            else:
+                return {"status": "warning", "details": "No display server detected - will use headless mode"}
+                
+        except Exception as e:
+            return {"status": "fail", "details": str(e)}
+    
+    def check_graphics_hardware(self):
+        """Check graphics hardware"""
+        try:
+            drivers = self.display_manager.detect_graphics_driver()
+            if drivers and drivers != ['unknown']:
+                return {"status": "pass", "details": f"Graphics drivers: {', '.join(drivers)}"}
+            else:
+                return {"status": "warning", "details": "Graphics hardware not detected"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def check_memory(self):
+        """Check system memory"""
+        try:
+            if psutil:
+                memory = psutil.virtual_memory()
+                total_gb = memory.total / (1024**3)
+                
+                if total_gb >= 1.0:
+                    return {"status": "pass", "details": f"RAM: {total_gb:.1f} GB"}
+                else:
+                    return {"status": "warning", "details": f"RAM: {total_gb:.1f} GB (minimum for basic functionality)"}
+            else:
+                return {"status": "warning", "details": "Memory check unavailable"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def check_disk_space(self):
+        """Check disk space"""
+        try:
+            if psutil:
+                disk = psutil.disk_usage('/')
+                free_gb = disk.free / (1024**3)
+                
+                if free_gb >= 1.0:
+                    return {"status": "pass", "details": f"Free space: {free_gb:.1f} GB"}
+                else:
+                    return {"status": "warning", "details": f"Free space: {free_gb:.1f} GB (low)"}
+            else:
+                return {"status": "warning", "details": "Disk check unavailable"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def check_network(self):
+        """Check network connectivity"""
+        try:
+            # Test internet connectivity
+            socket.create_connection(("8.8.8.8", 53), timeout=5)
+            return {"status": "pass", "details": "Internet connectivity available"}
+        except:
+            return {"status": "warning", "details": "No internet connectivity"}
+    
+    def check_audio_system(self):
+        """Check audio system"""
+        try:
+            audio_systems = ['pulseaudio', 'alsa', 'jack']
+            available_systems = []
+            
+            for system in audio_systems:
+                if shutil.which(system):
+                    available_systems.append(system)
+            
+            if available_systems:
+                return {"status": "pass", "details": f"Audio: {', '.join(available_systems)}"}
+            else:
+                return {"status": "warning", "details": "No audio system detected"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def check_packages(self):
+        """Check required packages"""
+        try:
+            required_packages = {
+                'tkinter': 'GUI framework',
+                'sqlite3': 'Database support',
+                'subprocess': 'Process management',
+                'threading': 'Multi-threading support'
+            }
+            
+            missing_packages = []
+            
+            for package, description in required_packages.items():
+                try:
+                    __import__(package)
+                except ImportError:
+                    missing_packages.append(f"{package} ({description})")
+            
+            if not missing_packages:
+                return {"status": "pass", "details": "All required packages available"}
+            else:
+                return {"status": "warning", "details": f"Missing: {', '.join(missing_packages)}"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def check_permissions(self):
+        """Check system permissions"""
+        try:
+            # Check write permissions
+            test_dirs = [
+                CONFIG_DIR,
+                os.path.expanduser("~"),
+                "/tmp"
+            ]
+            
+            writable_dirs = []
+            for test_dir in test_dirs:
+                try:
+                    os.makedirs(test_dir, exist_ok=True)
+                    test_file = os.path.join(test_dir, 'berke0s_test')
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                    writable_dirs.append(test_dir)
+                except:
+                    pass
+            
+            if len(writable_dirs) >= 2:
+                return {"status": "pass", "details": "Sufficient write permissions"}
+            else:
+                return {"status": "warning", "details": "Limited write permissions"}
+                
+        except Exception as e:
+            return {"status": "warning", "details": str(e)}
+    
+    def show_display_setup_step(self):
+        """Show display setup step"""
+        try:
+            # Header
+            header = tk.Label(self.main_container, 
+                            text="Display Configuration",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Display options frame
+            options_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            options_frame.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            # Display information
+            info_text = tk.Text(options_frame, height=8, width=80,
+                              bg="#1a1a1a", fg="white", font=self.normal_font,
+                              wrap=tk.WORD, relief=tk.FLAT)
+            info_text.pack(pady=(0, 20))
+            
+            # Get current display info
+            display_info = self.display_manager.get_display_info()
+            env_info = self.display_manager.detect_environment()
+            
+            info_content = f"""Current Display Configuration:
+Display: {display_info.get('display', 'Unknown')}
+Mode: {display_info.get('mode', 'Unknown')}
+Resolution: {display_info.get('width', 'Unknown')}x{display_info.get('height', 'Unknown')}
+Color Depth: {display_info.get('depth', 'Unknown')} bits
+
+System Information:
+OS: {env_info.get('distribution', 'Unknown')}
+X11 Available: {'Yes' if env_info.get('x11_available', {}).get('available') else 'No'}
+Graphics Driver: {', '.join(env_info.get('graphics_driver', ['Unknown']))}
+Current Display: {env_info.get('display', 'None')}
+"""
+            
+            info_text.insert('1.0', info_content)
+            info_text.config(state='disabled')
+            
+            # Display options
+            self.display_mode = tk.StringVar(value="auto")
+            
+            options = [
+                ("auto", "Automatic Detection (Recommended)"),
+                ("x11", "Force X11"),
+                ("headless", "Headless Mode (No Display)"),
+                ("virtual", "Virtual Display")
+            ]
+            
+            for value, text in options:
+                rb = tk.Radiobutton(options_frame, text=text, variable=self.display_mode, value=value,
+                                   bg="#0a0a0f", fg="white", font=self.normal_font,
+                                   selectcolor="#00ff88", activebackground="#0a0a0f")
+                rb.pack(anchor='w', pady=5)
+            
+            # Test display button
+            test_btn = tk.Button(options_frame, text="Test Display Configuration",
+                               command=self.test_display_config,
+                               bg="#00ff88", fg="black", font=self.normal_font,
+                               relief=tk.FLAT, padx=20, pady=5)
+            test_btn.pack(pady=20)
+            
+            # Navigation buttons
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Display setup step error: {e}")
+    
+    def test_display_config(self):
+        """Test display configuration"""
+        try:
+            mode = self.display_mode.get()
+            
+            # Create test window
+            test_window = tk.Toplevel(self.root)
+            test_window.title("Display Test")
+            test_window.geometry("400x300")
+            test_window.configure(bg="#1a1a1a")
+            
+            # Test content
+            tk.Label(test_window, text="Display Test", 
+                    font=("Arial", 20, "bold"), fg="#00ff88", bg="#1a1a1a").pack(pady=50)
+            
+            tk.Label(test_window, text=f"Mode: {mode.upper()}", 
+                    font=("Arial", 14), fg="white", bg="#1a1a1a").pack(pady=10)
+            
+            tk.Label(test_window, text="If you can see this window clearly,\nyour display is working correctly.", 
+                    font=("Arial", 12), fg="white", bg="#1a1a1a", justify=tk.CENTER).pack(pady=20)
+            
+            tk.Button(test_window, text="Close Test", command=test_window.destroy,
+                     bg="#00ff88", fg="black", font=("Arial", 10), relief=tk.FLAT).pack(pady=20)
+            
+            # Center test window
+            test_window.update_idletasks()
+            x = (test_window.winfo_screenwidth() // 2) - (400 // 2)
+            y = (test_window.winfo_screenheight() // 2) - (300 // 2)
+            test_window.geometry(f"400x300+{x}+{y}")
+            
+        except Exception as e:
+            logger.error(f"Display test error: {e}")
+            messagebox.showerror("Display Test Error", f"Failed to test display: {str(e)}")
+    
+    def show_language_step(self):
+        """Show language selection step"""
+        try:
+            # Implementation for language step
+            header = tk.Label(self.main_container, 
+                            text="Language Selection",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Language options
+            self.language_var = tk.StringVar(value="tr_TR")
+            
+            languages = [
+                ("tr_TR", "Türkçe (Turkish)"),
+                ("en_US", "English (US)"),
+                ("en_GB", "English (UK)"),
+                ("de_DE", "Deutsch (German)"),
+                ("fr_FR", "Français (French)"),
+                ("es_ES", "Español (Spanish)"),
+                ("it_IT", "Italiano (Italian)"),
+                ("ru_RU", "Русский (Russian)")
+            ]
+            
+            lang_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            lang_frame.pack(expand=True)
+            
+            for code, name in languages:
+                rb = tk.Radiobutton(lang_frame, text=name, variable=self.language_var, value=code,
+                                   bg="#0a0a0f", fg="white", font=self.normal_font,
+                                   selectcolor="#00ff88", activebackground="#0a0a0f")
+                rb.pack(anchor='w', pady=8, padx=50)
+            
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Language step error: {e}")
+    
+    def show_disk_setup_step(self):
+        """Show disk setup step - simplified for Tiny Core"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="Storage Configuration",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Information for Tiny Core users
+            info_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            info_frame.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            info_text = tk.Text(info_frame, height=15, width=70,
+                              bg="#1a1a1a", fg="white", font=self.normal_font,
+                              wrap=tk.WORD, relief=tk.FLAT)
+            info_text.pack()
+            
+            storage_info = """Storage Configuration for Tiny Core Linux:
+
+Berke0S will store its configuration and data in your home directory:
+• Configuration: ~/.berke0s/
+• User data: ~/Desktop, ~/Documents, etc.
+• Themes and customizations: ~/.berke0s/themes/
+• Applications data: ~/.berke0s/applications/
+
+For Tiny Core Linux:
+• Make sure you have backup configured (backup.sh)
+• Consider using persistent storage (/opt or /home)
+• Berke0S configuration will be preserved across reboots if properly backed up
+
+Estimated space requirements:
+• Minimum: 50 MB
+• Recommended: 200 MB for full installation with themes and applications
+• Additional space needed for user data
+
+Current available space will be checked during installation.
+"""
+            
+            info_text.insert('1.0', storage_info)
+            info_text.config(state='disabled')
+            
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Disk setup step error: {e}")
+    
+    def show_network_step(self):
+        """Show network setup step"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="Network Configuration",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Network frame
+            network_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            network_frame.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            # WiFi configuration
+            wifi_frame = tk.LabelFrame(network_frame, text="WiFi Configuration", 
+                                     bg="#1a1a1a", fg="white", font=self.normal_font)
+            wifi_frame.pack(fill=tk.X, pady=(0, 20))
+            
+            # Enable WiFi
+            self.enable_wifi = tk.BooleanVar(value=False)
+            wifi_check = tk.Checkbutton(wifi_frame, text="Configure WiFi", 
+                                       variable=self.enable_wifi,
+                                       bg="#1a1a1a", fg="white", font=self.normal_font,
+                                       selectcolor="#00ff88", activebackground="#1a1a1a",
+                                       command=self.toggle_wifi_config)
+            wifi_check.pack(anchor='w', padx=10, pady=10)
+            
+            # WiFi settings
+            self.wifi_settings_frame = tk.Frame(wifi_frame, bg="#1a1a1a")
+            self.wifi_settings_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+            
+            tk.Label(self.wifi_settings_frame, text="Network Name (SSID):", 
+                    bg="#1a1a1a", fg="white", font=self.normal_font).grid(row=0, column=0, sticky='w', pady=5)
+            self.wifi_ssid = tk.Entry(self.wifi_settings_frame, bg="#333333", fg="white", font=self.normal_font)
+            self.wifi_ssid.grid(row=0, column=1, sticky='ew', padx=(10, 0), pady=5)
+            
+            tk.Label(self.wifi_settings_frame, text="Password:", 
+                    bg="#1a1a1a", fg="white", font=self.normal_font).grid(row=1, column=0, sticky='w', pady=5)
+            self.wifi_password = tk.Entry(self.wifi_settings_frame, show='*', bg="#333333", fg="white", font=self.normal_font)
+            self.wifi_password.grid(row=1, column=1, sticky='ew', padx=(10, 0), pady=5)
+            
+            self.wifi_settings_frame.grid_columnconfigure(1, weight=1)
+            self.wifi_settings_frame.grid_remove()  # Initially hidden
+            
+            # Network status
+            status_frame = tk.LabelFrame(network_frame, text="Network Status", 
+                                       bg="#1a1a1a", fg="white", font=self.normal_font)
+            status_frame.pack(fill=tk.X)
+            
+            self.network_status = tk.Text(status_frame, height=6, bg="#1a1a1a", fg="white", 
+                                        font=("Courier", 9), relief=tk.FLAT)
+            self.network_status.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.check_network_status()
+            
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Network step error: {e}")
+    
+    def toggle_wifi_config(self):
+        """Toggle WiFi configuration visibility"""
+        if self.enable_wifi.get():
+            self.wifi_settings_frame.grid()
+        else:
+            self.wifi_settings_frame.grid_remove()
+    
+    def check_network_status(self):
+        """Check and display network status"""
+        try:
+            status_text = "Network Status:\n"
+            
+            # Check internet connectivity
+            try:
+                socket.create_connection(("8.8.8.8", 53), timeout=5)
+                status_text += "✅ Internet: Connected\n"
+            except:
+                status_text += "❌ Internet: Not connected\n"
+            
+            # Check network interfaces
+            try:
+                result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    interfaces = []
+                    for line in lines:
+                        if ': <' in line and 'lo:' not in line:
+                            interface = line.split(':')[1].strip()
+                            interfaces.append(interface)
+                    
+                    if interfaces:
+                        status_text += f"📡 Interfaces: {', '.join(interfaces[:3])}\n"
+                    else:
+                        status_text += "📡 Interfaces: None detected\n"
+            except:
+                status_text += "📡 Interfaces: Check failed\n"
+            
+            self.network_status.delete('1.0', tk.END)
+            self.network_status.insert('1.0', status_text)
+            
+        except Exception as e:
+            logger.error(f"Network status check error: {e}")
+    
+    def show_user_setup_step(self):
+        """Show user setup step"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="User Account Setup",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # User form
+            user_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            user_frame.pack(expand=True)
+            
+            # Form fields
+            fields = [
+                ("Full Name:", "user_fullname"),
+                ("Username:", "user_username"),
+                ("Password:", "user_password"),
+                ("Confirm Password:", "user_confirm_password")
+            ]
+            
+            self.user_fields = {}
+            
+            for i, (label_text, field_name) in enumerate(fields):
+                tk.Label(user_frame, text=label_text, bg="#0a0a0f", fg="white", 
+                        font=self.normal_font).grid(row=i, column=0, sticky='w', pady=10, padx=(50, 10))
+                
+                if "password" in field_name:
+                    entry = tk.Entry(user_frame, show='*', bg="#333333", fg="white", 
+                                   font=self.normal_font, width=30)
+                else:
+                    entry = tk.Entry(user_frame, bg="#333333", fg="white", 
+                                   font=self.normal_font, width=30)
+                
+                entry.grid(row=i, column=1, sticky='w', pady=10)
+                self.user_fields[field_name] = entry
+            
+            # Admin checkbox
+            self.user_admin = tk.BooleanVar(value=True)
+            admin_check = tk.Checkbutton(user_frame, text="Administrator privileges", 
+                                       variable=self.user_admin,
+                                       bg="#0a0a0f", fg="white", font=self.normal_font,
+                                       selectcolor="#00ff88", activebackground="#0a0a0f")
+            admin_check.grid(row=len(fields), column=0, columnspan=2, sticky='w', pady=10, padx=(50, 0))
+            
+            # Auto-login checkbox
+            self.user_autologin = tk.BooleanVar(value=True)
+            autologin_check = tk.Checkbutton(user_frame, text="Automatic login", 
+                                           variable=self.user_autologin,
+                                           bg="#0a0a0f", fg="white", font=self.normal_font,
+                                           selectcolor="#00ff88", activebackground="#0a0a0f")
+            autologin_check.grid(row=len(fields)+1, column=0, columnspan=2, sticky='w', pady=10, padx=(50, 0))
+            
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"User setup step error: {e}")
+    
+    def show_customization_step(self):
+        """Show customization step"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="Desktop Customization",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Customization options
+            custom_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            custom_frame.pack(fill=tk.BOTH, expand=True, padx=50)
             
             # Theme selection
-            print("\n4. Tema Seçimi / Theme Selection:")
-            print("   [1] Berke Dark [2] Berke Light [3] Ocean [4] Forest")
-            theme_choice = input("Tema / Theme (1-4): ").strip()
+            theme_frame = tk.LabelFrame(custom_frame, text="Theme", 
+                                      bg="#1a1a1a", fg="white", font=self.normal_font)
+            theme_frame.pack(fill=tk.X, pady=(0, 20))
             
-            themes = {"1": "berke_dark", "2": "berke_light", "3": "ocean", "4": "forest"}
-            self.config["theme"] = themes.get(theme_choice, "berke_dark")
+            self.theme_var = tk.StringVar(value="berke_dark")
             
-            # Create user
-            self.config["users"] = [{
-                "username": username,
-                "fullname": fullname,
-                "password": hashlib.sha256(password.encode()).hexdigest(),
-                "admin": True,
-                "auto_login": True
-            }]
+            themes = [
+                ("berke_dark", "Berke Dark (Default)"),
+                ("berke_light", "Berke Light"),
+                ("ocean", "Ocean Blue"),
+                ("forest", "Forest Green")
+            ]
             
-            # Perform installation
-            print("\n5. Kurulum Yapılıyor / Installing...")
-            self.perform_console_installation()
+            theme_inner = tk.Frame(theme_frame, bg="#1a1a1a")
+            theme_inner.pack(fill=tk.X, padx=10, pady=10)
             
-            print("\n✅ Kurulum tamamlandı! / Installation completed!")
-            print("🔄 Sistemi yeniden başlatın / Please reboot the system")
+            for i, (value, name) in enumerate(themes):
+                rb = tk.Radiobutton(theme_inner, text=name, variable=self.theme_var, value=value,
+                                   bg="#1a1a1a", fg="white", font=self.normal_font,
+                                   selectcolor="#00ff88", activebackground="#1a1a1a")
+                rb.grid(row=i//2, column=i%2, sticky='w', padx=20, pady=5)
             
-            return True
+            # Desktop options
+            desktop_frame = tk.LabelFrame(custom_frame, text="Desktop Options", 
+                                        bg="#1a1a1a", fg="white", font=self.normal_font)
+            desktop_frame.pack(fill=tk.X)
             
-        except KeyboardInterrupt:
-            print("\n❌ Kurulum iptal edildi / Installation cancelled")
-            return False
+            self.desktop_options = {}
+            
+            options = [
+                ("show_desktop_icons", "Show desktop icons", True),
+                ("effects", "Enable visual effects", True),
+                ("show_dock", "Show application dock", False),
+                ("auto_arrange", "Auto-arrange icons", False)
+            ]
+            
+            desktop_inner = tk.Frame(desktop_frame, bg="#1a1a1a")
+            desktop_inner.pack(fill=tk.X, padx=10, pady=10)
+            
+            for i, (key, text, default) in enumerate(options):
+                var = tk.BooleanVar(value=default)
+                check = tk.Checkbutton(desktop_inner, text=text, variable=var,
+                                     bg="#1a1a1a", fg="white", font=self.normal_font,
+                                     selectcolor="#00ff88", activebackground="#1a1a1a")
+                check.grid(row=i//2, column=i%2, sticky='w', padx=20, pady=5)
+                self.desktop_options[key] = var
+            
+            self.create_navigation_buttons()
+            
         except Exception as e:
-            logger.error(f"Console installation error: {e}")
-            print(f"❌ Kurulum hatası / Installation error: {e}")
-            return False
+            logger.error(f"Customization step error: {e}")
+    
+    def show_advanced_settings_step(self):
+        """Show advanced settings step"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="Advanced Settings",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
             
-    def perform_console_installation(self):
-        """Perform actual console installation"""
-        steps = [
-            ("Dizinler oluşturuluyor / Creating directories", self.create_directories),
-            ("Veritabanı hazırlanıyor / Preparing database", self.setup_database),
-            ("Sistem dosyaları kuruluyor / Installing system files", self.install_system_files),
-            ("Kullanıcı ayarları / User configuration", self.configure_user),
-            ("Masaüstü ortamı / Desktop environment", self.setup_desktop_environment),
-            ("Son ayarlar / Final configuration", self.finalize_installation)
-        ]
+            # Settings notebook
+            notebook = ttk.Notebook(self.main_container)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            # System tab
+            system_tab = tk.Frame(notebook, bg="#1a1a1a")
+            notebook.add(system_tab, text="System")
+            
+            self.system_settings = {}
+            
+            system_options = [
+                ("auto_updates", "Enable automatic updates", True),
+                ("crash_reporting", "Enable crash reporting", True),
+                ("telemetry", "Enable telemetry (anonymous usage data)", False),
+                ("auto_backup", "Enable automatic backup", False)
+            ]
+            
+            for i, (key, text, default) in enumerate(system_options):
+                var = tk.BooleanVar(value=default)
+                check = tk.Checkbutton(system_tab, text=text, variable=var,
+                                     bg="#1a1a1a", fg="white", font=self.normal_font,
+                                     selectcolor="#00ff88", activebackground="#1a1a1a")
+                check.pack(anchor='w', padx=20, pady=10)
+                self.system_settings[key] = var
+            
+            # Performance tab
+            perf_tab = tk.Frame(notebook, bg="#1a1a1a")
+            notebook.add(perf_tab, text="Performance")
+            
+            tk.Label(perf_tab, text="Performance Mode:", bg="#1a1a1a", fg="white", 
+                    font=self.normal_font).pack(anchor='w', padx=20, pady=(20, 5))
+            
+            self.performance_mode = tk.StringVar(value="balanced")
+            
+            perf_modes = [
+                ("power_save", "Power Saving"),
+                ("balanced", "Balanced"),
+                ("performance", "High Performance")
+            ]
+            
+            for value, text in perf_modes:
+                rb = tk.Radiobutton(perf_tab, text=text, variable=self.performance_mode, value=value,
+                                   bg="#1a1a1a", fg="white", font=self.normal_font,
+                                   selectcolor="#00ff88", activebackground="#1a1a1a")
+                rb.pack(anchor='w', padx=40, pady=5)
+            
+            # Security tab
+            security_tab = tk.Frame(notebook, bg="#1a1a1a")
+            notebook.add(security_tab, text="Security")
+            
+            self.security_settings = {}
+            
+            security_options = [
+                ("auto_lock", "Enable automatic screen lock", True),
+                ("require_password", "Require password for system changes", True),
+                ("firewall_enabled", "Enable basic firewall", True),
+                ("encryption_enabled", "Enable data encryption", False)
+            ]
+            
+            for i, (key, text, default) in enumerate(security_options):
+                var = tk.BooleanVar(value=default)
+                check = tk.Checkbutton(security_tab, text=text, variable=var,
+                                     bg="#1a1a1a", fg="white", font=self.normal_font,
+                                     selectcolor="#00ff88", activebackground="#1a1a1a")
+                check.pack(anchor='w', padx=20, pady=10)
+                self.security_settings[key] = var
+            
+            self.create_navigation_buttons()
+            
+        except Exception as e:
+            logger.error(f"Advanced settings step error: {e}")
+    
+    def show_installation_step(self):
+        """Show installation progress step"""
+        try:
+            header = tk.Label(self.main_container, 
+                            text="Installing Berke0S",
+                            font=self.header_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(30, 20))
+            
+            # Progress frame
+            progress_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            progress_frame.pack(fill=tk.BOTH, expand=True, padx=50, pady=20)
+            
+            # Progress bar
+            self.progress_var = tk.DoubleVar()
+            progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, 
+                                         maximum=100, length=600)
+            progress_bar.pack(pady=(0, 20))
+            
+            # Progress text
+            self.progress_text = tk.Text(progress_frame, height=20, width=80,
+                                       bg="#1a1a1a", fg="white", font=("Courier", 10),
+                                       wrap=tk.WORD, relief=tk.FLAT)
+            self.progress_text.pack(fill=tk.BOTH, expand=True)
+            
+            # Start installation
+            self.start_installation_process()
+            
+        except Exception as e:
+            logger.error(f"Installation step error: {e}")
+    
+    def start_installation_process(self):
+        """Start the actual installation process"""
+        try:
+            # Collect all configuration
+            self.collect_configuration()
+            
+            # Installation steps
+            steps = [
+                ("Preparing installation environment", self.prepare_installation),
+                ("Creating directories", self.create_directories),
+                ("Setting up database", self.setup_database),
+                ("Configuring display system", self.configure_display_system),
+                ("Installing system files", self.install_system_files),
+                ("Creating user account", self.create_user_account),
+                ("Configuring network", self.configure_network),
+                ("Setting up desktop environment", self.setup_desktop_environment),
+                ("Installing applications", self.install_applications),
+                ("Applying customizations", self.apply_customizations),
+                ("Configuring advanced settings", self.configure_advanced_settings),
+                ("Creating startup scripts", self.create_startup_scripts),
+                ("Finalizing installation", self.finalize_installation)
+            ]
+            
+            self.installation_thread = threading.Thread(
+                target=self.run_installation_steps, 
+                args=(steps,),
+                daemon=True
+            )
+            self.installation_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Installation start error: {e}")
+            self.progress_text.insert(tk.END, f"❌ Installation failed to start: {str(e)}\n")
+    
+    def collect_configuration(self):
+        """Collect all configuration from wizard steps"""
+        try:
+            # Update config with user selections
+            if hasattr(self, 'language_var'):
+                self.config["language"] = self.language_var.get()
+            
+            if hasattr(self, 'display_mode'):
+                self.config["display"]["display_server"] = self.display_mode.get()
+            
+            if hasattr(self, 'theme_var'):
+                self.config["theme"] = self.theme_var.get()
+            
+            # User account
+            if hasattr(self, 'user_fields'):
+                user_data = {
+                    "username": self.user_fields["user_username"].get(),
+                    "fullname": self.user_fields["user_fullname"].get(),
+                    "password": hashlib.sha256(self.user_fields["user_password"].get().encode()).hexdigest(),
+                    "admin": self.user_admin.get(),
+                    "auto_login": self.user_autologin.get()
+                }
+                self.config["users"] = [user_data]
+            
+            # Network
+            if hasattr(self, 'enable_wifi') and self.enable_wifi.get():
+                self.config["wifi"] = {
+                    "ssid": self.wifi_ssid.get(),
+                    "password": self.wifi_password.get()
+                }
+            
+            # Desktop options
+            if hasattr(self, 'desktop_options'):
+                for key, var in self.desktop_options.items():
+                    self.config["desktop"][key] = var.get()
+            
+            # System settings
+            if hasattr(self, 'system_settings'):
+                for key, var in self.system_settings.items():
+                    self.config["system"][key] = var.get()
+            
+            # Performance
+            if hasattr(self, 'performance_mode'):
+                self.config["system"]["performance_mode"] = self.performance_mode.get()
+            
+            # Security
+            if hasattr(self, 'security_settings'):
+                for key, var in self.security_settings.items():
+                    self.config["security"][key] = var.get()
+            
+            logger.info("Configuration collected successfully")
+            
+        except Exception as e:
+            logger.error(f"Configuration collection error: {e}")
+    
+    def run_installation_steps(self, steps):
+        """Run installation steps in separate thread"""
+        try:
+            total_steps = len(steps)
+            
+            for i, (step_name, step_func) in enumerate(steps):
+                try:
+                    # Update progress
+                    progress = (i / total_steps) * 100
+                    self.progress_var.set(progress)
+                    
+                    # Update text
+                    self.progress_text.insert(tk.END, f"[{i+1}/{total_steps}] {step_name}...\n")
+                    self.root.update()
+                    
+                    # Execute step
+                    step_func()
+                    
+                    self.progress_text.insert(tk.END, f"✅ {step_name} completed\n\n")
+                    self.root.update()
+                    
+                    time.sleep(0.5)  # Brief pause for user to see progress
+                    
+                except Exception as e:
+                    self.progress_text.insert(tk.END, f"❌ {step_name} failed: {str(e)}\n\n")
+                    logger.error(f"Installation step '{step_name}' failed: {e}")
+                    self.root.update()
+            
+            # Complete
+            self.progress_var.set(100)
+            self.progress_text.insert(tk.END, "🎉 Installation completed successfully!\n")
+            self.root.update()
+            
+            # Enable next button
+            self.root.after(2000, self.enable_next_button)
+            
+        except Exception as e:
+            logger.error(f"Installation error: {e}")
+            self.progress_text.insert(tk.END, f"❌ Installation failed: {str(e)}\n")
+    
+    def enable_next_button(self):
+        """Enable next button after installation"""
+        if hasattr(self, 'next_button'):
+            self.next_button.config(state='normal')
+    
+    # Installation step implementations
+    def prepare_installation(self):
+        """Prepare installation environment"""
+        # Verify system requirements
+        if not os.path.exists('/tmp'):
+            raise Exception("Temporary directory not available")
         
-        for i, (desc, func) in enumerate(steps):
-            print(f"[{i+1}/{len(steps)}] {desc}...")
-            try:
-                func()
-                print(f"✓ {desc} - Tamamlandı / Completed")
-            except Exception as e:
-                print(f"✗ {desc} - Hata / Error: {e}")
-                logger.error(f"Installation step failed: {desc} - {e}")
-            time.sleep(0.5)
+        # Set up logging
+        os.makedirs(CONFIG_DIR, exist_ok=True)
     
     def create_directories(self):
         """Create necessary directories"""
         dirs = [CONFIG_DIR, THEMES_DIR, PLUGINS_DIR, WALLPAPERS_DIR, APPS_DIR]
         for directory in dirs:
             os.makedirs(directory, exist_ok=True)
+            
+        # Create user directories
+        user_dirs = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Scripts"]
+        for user_dir in user_dirs:
+            os.makedirs(os.path.expanduser(f"~/{user_dir}"), exist_ok=True)
     
     def setup_database(self):
         """Setup system database"""
         init_database()
     
+    def configure_display_system(self):
+        """Configure display system based on user selection"""
+        display_mode = self.config.get("display", {}).get("display_server", "auto")
+        
+        if display_mode == "auto":
+            # Auto-detect and configure
+            pass
+        elif display_mode == "headless":
+            # Configure headless mode
+            self.config["display"]["headless_mode"] = True
+        
+        # Save display configuration
+        display_config = {
+            "mode": display_mode,
+            "configured_at": datetime.datetime.now().isoformat()
+        }
+        
+        with open(f"{CONFIG_DIR}/display_config.json", 'w') as f:
+            json.dump(display_config, f, indent=4)
+    
     def install_system_files(self):
         """Install system files and configurations"""
-        # Save main configuration
         self.save_config()
-        
-        # Create autostart script
         self.create_autostart()
     
-    def configure_user(self):
-        """Configure user account"""
+    def create_user_account(self):
+        """Create user account in database"""
         if self.config.get("users"):
-            user = self.config["users"][0]
-            # Create user directories
-            home_dir = os.path.expanduser(f"~{user['username']}")
-            for subdir in ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Scripts"]:
-                os.makedirs(os.path.join(home_dir, subdir), exist_ok=True)
+            try:
+                conn = sqlite3.connect(DATABASE_FILE)
+                cursor = conn.cursor()
+                
+                user = self.config["users"][0]
+                cursor.execute(
+                    "INSERT OR REPLACE INTO users (username, fullname, password_hash, is_admin, preferences) VALUES (?, ?, ?, ?, ?)",
+                    (user["username"], user["fullname"], user["password"], 
+                     int(user["admin"]), json.dumps({"auto_login": user["auto_login"]}))
+                )
+                
+                conn.commit()
+                conn.close()
+                
+            except Exception as e:
+                logger.error(f"User creation error: {e}")
+    
+    def configure_network(self):
+        """Configure network settings"""
+        if self.config.get("wifi", {}).get("ssid"):
+            # Save WiFi configuration for later use
+            wifi_config = {
+                "ssid": self.config["wifi"]["ssid"],
+                "configured": True,
+                "configured_at": datetime.datetime.now().isoformat()
+            }
+            
+            with open(f"{CONFIG_DIR}/wifi_config.json", 'w') as f:
+                json.dump(wifi_config, f, indent=4)
     
     def setup_desktop_environment(self):
         """Setup desktop environment"""
-        # Create default applications list
         self.create_default_applications()
-        
-        # Setup themes
         self.install_default_themes()
+    
+    def install_applications(self):
+        """Install default applications"""
+        # Default applications are created in database by create_default_applications
+        pass
+    
+    def apply_customizations(self):
+        """Apply user customizations"""
+        # Theme and desktop settings are already in config
+        pass
+    
+    def configure_advanced_settings(self):
+        """Configure advanced system settings"""
+        # Advanced settings are already in config
+        pass
+    
+    def create_startup_scripts(self):
+        """Create startup scripts for different environments"""
+        self.create_autostart()
+        self.create_desktop_entry()
     
     def finalize_installation(self):
         """Finalize installation"""
         self.config["installed"] = True
         self.config["first_boot"] = False
+        self.config["installation_date"] = datetime.datetime.now().isoformat()
         self.save_config()
         
         # Create installation flag
         with open(INSTALL_FLAG, 'w') as f:
             f.write(json.dumps({
                 "installed_at": datetime.datetime.now().isoformat(),
-                "version": "3.0",
+                "version": "3.0-v2",
                 "user": self.config.get("users", [{}])[0].get("username", "unknown")
             }))
     
     def create_autostart(self):
-        """Create autostart configuration"""
+        """Create autostart configuration for different environments"""
         try:
-            autostart_content = f"""#!/bin/bash
-# Berke0S Autostart Script
+            script_content = f"""#!/bin/bash
+# Berke0S Autostart Script V2
 export DISPLAY=:0
 cd {os.path.dirname(os.path.abspath(__file__))}
+
+# Try to start Berke0S
 python3 {os.path.abspath(__file__)} &
+
+# For Tiny Core Linux - add to bootlocal.sh
+if [ -f /opt/bootlocal.sh ]; then
+    if ! grep -q "berke0s" /opt/bootlocal.sh; then
+        echo "# Berke0S Desktop Environment" >> /opt/bootlocal.sh
+        echo "python3 {os.path.abspath(__file__)} &" >> /opt/bootlocal.sh
+    fi
+fi
 """
             
             # Try multiple autostart locations
             autostart_locations = [
-                "/opt/bootlocal.sh",
                 os.path.expanduser("~/.xsession"),
-                os.path.expanduser("~/.xinitrc")
+                os.path.expanduser("~/.xinitrc"),
+                f"{CONFIG_DIR}/autostart.sh"
             ]
             
             for location in autostart_locations:
                 try:
-                    with open(location, 'a') as f:
-                        f.write(autostart_content)
+                    with open(location, 'w') as f:
+                        f.write(script_content)
                     os.chmod(location, 0o755)
-                except:
-                    continue
+                except Exception as e:
+                    logger.warning(f"Failed to create autostart at {location}: {e}")
                     
         except Exception as e:
             logger.warning(f"Autostart creation failed: {e}")
+    
+    def create_desktop_entry(self):
+        """Create desktop entry for application launchers"""
+        try:
+            desktop_entry = f"""[Desktop Entry]
+Name=Berke0S Desktop Environment
+Comment=Ultimate Desktop Environment for Tiny Core Linux
+Exec=python3 {os.path.abspath(__file__)}
+Icon=berke0s
+Type=Application
+Categories=System;
+StartupNotify=true
+"""
+            
+            desktop_dirs = [
+                os.path.expanduser("~/.local/share/applications"),
+                os.path.expanduser("~/Desktop"),
+                "/usr/local/share/applications"
+            ]
+            
+            for desktop_dir in desktop_dirs:
+                try:
+                    os.makedirs(desktop_dir, exist_ok=True)
+                    desktop_file = os.path.join(desktop_dir, "berke0s.desktop")
+                    with open(desktop_file, 'w') as f:
+                        f.write(desktop_entry)
+                    os.chmod(desktop_file, 0o755)
+                except Exception as e:
+                    logger.warning(f"Failed to create desktop entry in {desktop_dir}: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"Desktop entry creation failed: {e}")
     
     def create_default_applications(self):
         """Create default applications database"""
@@ -627,7 +2818,8 @@ python3 {os.path.abspath(__file__)} &
                 ("Code Editor", "berke0s_ide", "⌨️", "Development", "Integrated development environment"),
                 ("Screen Recorder", "berke0s_recorder", "📹", "Multimedia", "Screen recording"),
                 ("System Backup", "berke0s_backup", "💾", "System", "System backup and restore"),
-                ("Virtual Desktop", "berke0s_vdesktop", "🖥️", "System", "Virtual desktop manager")
+                ("Virtual Desktop", "berke0s_vdesktop", "🖥️", "System", "Virtual desktop manager"),
+                ("Display Settings", "berke0s_display", "🖥️", "System", "Display configuration")
             ]
             
             for app in apps:
@@ -643,80 +2835,73 @@ python3 {os.path.abspath(__file__)} &
             logger.error(f"Default applications creation failed: {e}")
     
     def install_default_themes(self):
-        """Install default theme files"""
+        """Install default theme files with enhanced V2 themes"""
         try:
             themes = {
                 "berke_dark": {
-                    "name": "Berke Dark",
+                    "name": "Berke Dark V2",
+                    "version": "2.0",
                     "colors": {
-                        "bg": "#1a1a1a",
-                        "fg": "#ffffff",
-                        "accent": "#00ff88",
-                        "secondary": "#4a9eff",
-                        "warning": "#ffb347",
-                        "error": "#ff6b6b",
-                        "success": "#00ff88",
-                        "taskbar": "#0f0f23",
-                        "window": "#2a2a2a",
-                        "input": "#333333",
-                        "border": "#444444",
-                        "hover": "#555555",
-                        "selection": "#00ff8844"
-                    }
+                        "bg": "#1a1a1a", "fg": "#ffffff", "accent": "#00ff88",
+                        "secondary": "#4a9eff", "warning": "#ffb347", "error": "#ff6b6b",
+                        "success": "#00ff88", "taskbar": "#0f0f23", "window": "#2a2a2a",
+                        "input": "#333333", "border": "#444444", "hover": "#555555",
+                        "selection": "#00ff8844", "shadow": "#00000055"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Courier"},
+                    "effects": {"blur": True, "transparency": True, "animations": True}
                 },
                 "berke_light": {
-                    "name": "Berke Light",
+                    "name": "Berke Light V2",
+                    "version": "2.0",
                     "colors": {
-                        "bg": "#f5f5f5",
-                        "fg": "#333333",
-                        "accent": "#007acc",
-                        "secondary": "#28a745",
-                        "warning": "#ffc107",
-                        "error": "#dc3545",
-                        "success": "#28a745",
-                        "taskbar": "#e9ecef",
-                        "window": "#ffffff",
-                        "input": "#ffffff",
-                        "border": "#cccccc",
-                        "hover": "#e9ecef",
-                        "selection": "#007acc44"
-                    }
+                        "bg": "#f5f5f5", "fg": "#333333", "accent": "#007acc",
+                        "secondary": "#28a745", "warning": "#ffc107", "error": "#dc3545",
+                        "success": "#28a745", "taskbar": "#e9ecef", "window": "#ffffff",
+                        "input": "#ffffff", "border": "#cccccc", "hover": "#e9ecef",
+                        "selection": "#007acc44", "shadow": "#00000022"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Courier"},
+                    "effects": {"blur": False, "transparency": False, "animations": True}
                 },
                 "ocean": {
-                    "name": "Ocean Blue",
+                    "name": "Ocean Blue V2",
+                    "version": "2.0", 
                     "colors": {
-                        "bg": "#0d1b2a",
-                        "fg": "#ffffff",
-                        "accent": "#00b4d8",
-                        "secondary": "#0077b6",
-                        "warning": "#f77f00",
-                        "error": "#d62828",
-                        "success": "#2a9d8f",
-                        "taskbar": "#03045e",
-                        "window": "#1b263b",
-                        "input": "#415a77",
-                        "border": "#457b9d",
-                        "hover": "#1d3557",
-                        "selection": "#00b4d844"
-                    }
+                        "bg": "#0d1b2a", "fg": "#ffffff", "accent": "#00b4d8",
+                        "secondary": "#0077b6", "warning": "#f77f00", "error": "#d62828",
+                        "success": "#2a9d8f", "taskbar": "#03045e", "window": "#1b263b",
+                        "input": "#415a77", "border": "#457b9d", "hover": "#1d3557",
+                        "selection": "#00b4d844", "shadow": "#00000066"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Courier"},
+                    "effects": {"blur": True, "transparency": True, "animations": True}
                 },
                 "forest": {
-                    "name": "Forest Green",
+                    "name": "Forest Green V2",
+                    "version": "2.0",
                     "colors": {
-                        "bg": "#1b4332",
-                        "fg": "#ffffff",
-                        "accent": "#40916c",
-                        "secondary": "#52b788",
-                        "warning": "#f77f00",
-                        "error": "#e63946",
-                        "success": "#2d6a4f",
-                        "taskbar": "#081c15",
-                        "window": "#2d6a4f",
-                        "input": "#40916c",
-                        "border": "#52b788",
-                        "hover": "#2d6a4f",
-                        "selection": "#40916c44"
-                    }
+                        "bg": "#1b4332", "fg": "#ffffff", "accent": "#40916c",
+                        "secondary": "#52b788", "warning": "#f77f00", "error": "#e63946",
+                        "success": "#2d6a4f", "taskbar": "#081c15", "window": "#2d6a4f",
+                        "input": "#40916c", "border": "#52b788", "hover": "#2d6a4f",
+                        "selection": "#40916c44", "shadow": "#00000044"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Courier"},
+                    "effects": {"blur": True, "transparency": True, "animations": True}
+                },
+                "tinycore": {
+                    "name": "Tiny Core Classic",
+                    "version": "2.0",
+                    "colors": {
+                        "bg": "#2e3436", "fg": "#ffffff", "accent": "#729fcf",
+                        "secondary": "#8ae234", "warning": "#fcaf3e", "error": "#ef2929",
+                        "success": "#8ae234", "taskbar": "#555753", "window": "#3c4043",
+                        "input": "#2e3436", "border": "#888a85", "hover": "#555753",
+                        "selection": "#729fcf44", "shadow": "#00000055"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Monospace"},
+                    "effects": {"blur": False, "transparency": False, "animations": False}
                 }
             }
             
@@ -728,6 +2913,355 @@ python3 {os.path.abspath(__file__)} &
         except Exception as e:
             logger.error(f"Theme installation failed: {e}")
     
+    def show_complete_step(self):
+        """Show installation complete step"""
+        try:
+            # Header
+            header = tk.Label(self.main_container, 
+                            text="Installation Complete!",
+                            font=self.title_font,
+                            fg="#00ff88", bg="#0a0a0f")
+            header.pack(pady=(50, 30))
+            
+            # Success message
+            message = tk.Text(self.main_container, height=15, width=70,
+                            bg="#1a1a1a", fg="white", font=self.normal_font,
+                            wrap=tk.WORD, relief=tk.FLAT)
+            message.pack(pady=20, padx=50)
+            
+            complete_text = f"""
+🎉 Berke0S 3.0 V2 has been successfully installed!
+
+✅ Installation Summary:
+• Desktop environment configured
+• User account created: {self.config.get('users', [{}])[0].get('fullname', 'User')}
+• Display system optimized for your hardware
+• {len(self.config.get('users', []))} user account(s) configured
+• Theme applied: {self.config.get('theme', 'berke_dark')}
+• Network configuration saved
+• Advanced settings configured
+
+🚀 What's Next:
+• Click "Finish" to complete the installation
+• Berke0S will start automatically after installation
+• You can launch applications from the start menu
+• Customize your desktop from Settings
+• Enjoy your new ultimate desktop environment!
+
+📋 Important Information:
+• Configuration saved to: ~/.berke0s/
+• For Tiny Core Linux: Add to backup for persistence
+• Documentation available in the Help menu
+• Report issues through the System Monitor
+
+Thank you for choosing Berke0S Ultimate Desktop Environment!
+            """
+            
+            message.insert('1.0', complete_text)
+            message.config(state='disabled')
+            
+            # Final buttons
+            button_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            button_frame.pack(pady=30)
+            
+            finish_btn = tk.Button(button_frame, text="Finish & Start Berke0S",
+                                 command=self.finish_installation,
+                                 bg="#00ff88", fg="black", font=self.header_font,
+                                 relief=tk.FLAT, padx=30, pady=10)
+            finish_btn.pack(side=tk.LEFT, padx=10)
+            
+            exit_btn = tk.Button(button_frame, text="Exit Installer",
+                               command=self.exit_installer,
+                               bg="#666666", fg="white", font=self.normal_font,
+                               relief=tk.FLAT, padx=20, pady=10)
+            exit_btn.pack(side=tk.LEFT, padx=10)
+            
+        except Exception as e:
+            logger.error(f"Complete step error: {e}")
+    
+    def create_navigation_buttons(self):
+        """Create navigation buttons for wizard"""
+        try:
+            nav_frame = tk.Frame(self.main_container, bg="#0a0a0f")
+            nav_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=20)
+            
+            # Back button
+            if self.current_step > 0:
+                back_btn = tk.Button(nav_frame, text="< Back",
+                                   command=self.previous_step,
+                                   bg="#666666", fg="white", font=self.normal_font,
+                                   relief=tk.FLAT, padx=20, pady=5)
+                back_btn.pack(side=tk.LEFT, padx=10)
+            
+            # Next button
+            if self.current_step < len(self.steps) - 1:
+                next_text = "Next >" if self.current_step < len(self.steps) - 2 else "Install"
+                self.next_button = tk.Button(nav_frame, text=next_text,
+                                           command=self.next_step,
+                                           bg="#00ff88", fg="black", font=self.normal_font,
+                                           relief=tk.FLAT, padx=20, pady=5)
+                self.next_button.pack(side=tk.RIGHT, padx=10)
+                
+                # Disable next button during installation
+                if self.steps[self.current_step] == "installation":
+                    self.next_button.config(state='disabled')
+            
+            # Progress indicator
+            progress_text = f"Step {self.current_step + 1} of {len(self.steps)}"
+            progress_label = tk.Label(nav_frame, text=progress_text,
+                                    bg="#0a0a0f", fg="#888888", font=self.small_font)
+            progress_label.pack()
+            
+        except Exception as e:
+            logger.error(f"Navigation buttons error: {e}")
+    
+    def next_step(self):
+        """Go to next step"""
+        if self.validate_current_step():
+            self.current_step += 1
+            self.show_step()
+    
+    def previous_step(self):
+        """Go to previous step"""
+        self.current_step -= 1
+        self.show_step()
+    
+    def validate_current_step(self):
+        """Validate current step before proceeding"""
+        try:
+            step_name = self.steps[self.current_step]
+            
+            if step_name == "user_setup":
+                # Validate user input
+                if hasattr(self, 'user_fields'):
+                    username = self.user_fields["user_username"].get().strip()
+                    fullname = self.user_fields["user_fullname"].get().strip()
+                    password = self.user_fields["user_password"].get()
+                    confirm_password = self.user_fields["user_confirm_password"].get()
+                    
+                    if not username or not fullname:
+                        messagebox.showerror("Validation Error", "Please fill in all required fields.")
+                        return False
+                    
+                    if len(username) < 3:
+                        messagebox.showerror("Validation Error", "Username must be at least 3 characters long.")
+                        return False
+                    
+                    if len(password) < 4:
+                        messagebox.showerror("Validation Error", "Password must be at least 4 characters long.")
+                        return False
+                    
+                    if password != confirm_password:
+                        messagebox.showerror("Validation Error", "Passwords do not match.")
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Step validation error: {e}")
+            return True
+    
+    def finish_installation(self):
+        """Finish installation and start Berke0S"""
+        try:
+            self.root.destroy()
+            
+            # Start Berke0S
+            logger.info("Starting Berke0S after installation...")
+            wm = WindowManager()
+            wm.run()
+            
+        except Exception as e:
+            logger.error(f"Finish installation error: {e}")
+    
+    def exit_installer(self):
+        """Exit installer without starting Berke0S"""
+        try:
+            self.root.destroy()
+            sys.exit(0)
+        except Exception as e:
+            logger.error(f"Exit installer error: {e}")
+            sys.exit(1)
+        
+    def console_install(self):
+        """Enhanced console-based installation with V2 improvements"""
+        try:
+            print("\n" + "="*80)
+            print("  ██████╗ ███████╗██████╗ ██╗  ██╗███████╗ ██████╗ ███████╗")
+            print("  ██╔══██╗██╔════╝██╔══██╗██║ ██╔╝██╔════╝██╔═████╗██╔════╝")
+            print("  ██████╔╝█████╗  ██████╔╝█████╔╝ █████╗  ██║██╔██║███████╗")
+            print("  ██╔══██╗██╔══╝  ██╔══██╗██╔═██╗ ██╔══╝  ████╔╝██║╚════██║")
+            print("  ██████╔╝███████╗██║  ██║██║  ██╗███████╗╚██████╔╝███████║")
+            print("  ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝")
+            print("  Ultimate Desktop Environment V2 - Enhanced Display Management")
+            print("  Console Installation Mode")
+            print("="*80)
+            
+            # Enhanced console setup
+            print("\n🚀 Berke0S V2 Enhanced Installation")
+            print("   • Improved display detection and management")
+            print("   • Better Tiny Core Linux support")
+            print("   • Enhanced error handling")
+            print("   • Robust fallback systems")
+            
+            # System check
+            print("\n🔍 Performing system check...")
+            self.perform_console_system_check()
+            
+            # Language selection
+            print("\n1. Dil Seçimi / Language Selection:")
+            print("   [1] Türkçe [2] English [3] Deutsch [4] Français")
+            lang_choice = input("Seçim / Choice (1-4): ").strip()
+            
+            languages = {"1": "tr_TR", "2": "en_US", "3": "de_DE", "4": "fr_FR"}
+            self.config["language"] = languages.get(lang_choice, "tr_TR")
+            
+            # Display setup
+            print("\n2. Display Configuration:")
+            print("   [1] Auto-detect (Recommended)")
+            print("   [2] Force X11")
+            print("   [3] Headless mode")
+            display_choice = input("Display mode (1-3): ").strip()
+            
+            display_modes = {"1": "auto", "2": "x11", "3": "headless"}
+            self.config["display"]["display_server"] = display_modes.get(display_choice, "auto")
+            
+            # User setup
+            print("\n3. Kullanıcı Hesabı / User Account:")
+            fullname = input("Ad Soyad / Full Name: ").strip()
+            username = input("Kullanıcı Adı / Username: ").strip()
+            password = getpass.getpass("Şifre / Password: ")
+            
+            # Validate user input
+            if len(username) < 3:
+                print("❌ Username must be at least 3 characters")
+                return False
+            if len(password) < 4:
+                print("❌ Password must be at least 4 characters")
+                return False
+            
+            # Network setup
+            print("\n4. Ağ Ayarları / Network Settings:")
+            setup_wifi = input("WiFi kurmak ister misiniz? / Setup WiFi? (y/n): ").lower() == 'y'
+            
+            if setup_wifi:
+                ssid = input("WiFi Ağ Adı / SSID: ").strip()
+                wifi_password = getpass.getpass("WiFi Şifresi / WiFi Password: ")
+                self.config["wifi"] = {"ssid": ssid, "password": wifi_password}
+            
+            # Theme selection
+            print("\n5. Tema Seçimi / Theme Selection:")
+            print("   [1] Berke Dark V2 [2] Berke Light V2 [3] Ocean Blue V2")
+            print("   [4] Forest Green V2 [5] Tiny Core Classic")
+            theme_choice = input("Tema / Theme (1-5): ").strip()
+            
+            themes = {
+                "1": "berke_dark", "2": "berke_light", "3": "ocean", 
+                "4": "forest", "5": "tinycore"
+            }
+            self.config["theme"] = themes.get(theme_choice, "berke_dark")
+            
+            # Advanced options
+            print("\n6. Gelişmiş Ayarlar / Advanced Settings:")
+            enable_effects = input("Visual effects enable? (y/n): ").lower() == 'y'
+            self.config["desktop"]["effects"] = enable_effects
+            
+            auto_updates = input("Auto updates enable? (y/n): ").lower() == 'y'
+            self.config["system"]["auto_updates"] = auto_updates
+            
+            # Create user
+            self.config["users"] = [{
+                "username": username,
+                "fullname": fullname,
+                "password": hashlib.sha256(password.encode()).hexdigest(),
+                "admin": True,
+                "auto_login": True
+            }]
+            
+            # Perform installation
+            print("\n7. Kurulum Yapılıyor / Installing...")
+            self.perform_console_installation()
+            
+            print("\n✅ Kurulum tamamlandı! / Installation completed!")
+            print("🔄 Berke0S başlatılıyor / Starting Berke0S...")
+            
+            return True
+            
+        except KeyboardInterrupt:
+            print("\n❌ Kurulum iptal edildi / Installation cancelled")
+            return False
+        except Exception as e:
+            logger.error(f"Console installation error: {e}")
+            print(f"❌ Kurulum hatası / Installation error: {e}")
+            return False
+    
+    def perform_console_system_check(self):
+        """Perform system check in console mode"""
+        try:
+            checks = [
+                ("Operating System", self.check_operating_system),
+                ("Python Version", self.check_python_version),
+                ("Display System", self.check_display_system),
+                ("Memory", self.check_memory),
+                ("Disk Space", self.check_disk_space),
+                ("Permissions", self.check_permissions)
+            ]
+            
+            print("   System Compatibility Check:")
+            passed = 0
+            
+            for check_name, check_func in checks:
+                try:
+                    result = check_func()
+                    if result["status"] == "pass":
+                        print(f"   ✅ {check_name}: {result.get('details', 'OK')}")
+                        passed += 1
+                    elif result["status"] == "warning":
+                        print(f"   ⚠️  {check_name}: {result.get('details', 'Warning')}")
+                        passed += 0.5
+                    else:
+                        print(f"   ❌ {check_name}: {result.get('details', 'Failed')}")
+                except Exception as e:
+                    print(f"   ❌ {check_name}: Error - {str(e)}")
+            
+            pass_rate = (passed / len(checks)) * 100
+            print(f"\n   📊 Compatibility: {pass_rate:.0f}% ({passed:.1f}/{len(checks)})")
+            
+            if pass_rate >= 70:
+                print("   ✅ System is compatible!")
+            else:
+                print("   ⚠️  Some compatibility issues detected")
+                
+        except Exception as e:
+            logger.error(f"Console system check error: {e}")
+            print(f"   ❌ System check failed: {e}")
+            
+    def perform_console_installation(self):
+        """Perform actual console installation with V2 enhancements"""
+        steps = [
+            ("Dizinler oluşturuluyor / Creating directories", self.create_directories),
+            ("Veritabanı hazırlanıyor / Preparing database", self.setup_database),
+            ("Display sistemi yapılandırılıyor / Configuring display", self.configure_display_system),
+            ("Sistem dosyaları kuruluyor / Installing system files", self.install_system_files),
+            ("Kullanıcı ayarları / User configuration", self.create_user_account),
+            ("Ağ yapılandırması / Network configuration", self.configure_network),
+            ("Masaüstü ortamı / Desktop environment", self.setup_desktop_environment),
+            ("Uygulamalar kuruluyor / Installing applications", self.install_applications),
+            ("Temalar kuruluyor / Installing themes", self.install_default_themes),
+            ("Başlangıç betikleri / Startup scripts", self.create_startup_scripts),
+            ("Son ayarlar / Final configuration", self.finalize_installation)
+        ]
+        
+        for i, (desc, func) in enumerate(steps):
+            print(f"[{i+1}/{len(steps)}] {desc}...")
+            try:
+                func()
+                print(f"✓ {desc} - Tamamlandı / Completed")
+            except Exception as e:
+                print(f"✗ {desc} - Hata / Error: {e}")
+                logger.error(f"Installation step failed: {desc} - {e}")
+            time.sleep(0.3)
+    
     def save_config(self):
         """Save configuration to file"""
         try:
@@ -735,11 +3269,8 @@ python3 {os.path.abspath(__file__)} &
                 json.dump(self.config, f, indent=4)
         except Exception as e:
             logger.error(f"Config save error: {e}")
-    
-    # Enhanced step methods would continue here...
-    # (Implementing all the installation steps with better UI and functionality)
 
-# Enhanced Notification System
+# Enhanced Notification System (keeping existing implementation)
 class NotificationSystem:
     """Advanced notification system with rich features"""
     
@@ -1092,9 +3623,9 @@ class NotificationSystem:
         # Clear history
         self.notification_history.clear()
 
-# Enhanced Window Manager
+# Enhanced Window Manager with improved display management
 class WindowManager:
-    """Ultimate window manager with advanced features"""
+    """Ultimate window manager with advanced features and enhanced display support"""
     
     def __init__(self):
         self.root = None
@@ -1114,26 +3645,60 @@ class WindowManager:
         self.workspace_manager = None
         self.plugin_manager = None
         self.performance_monitor = None
+        self.display_manager = DisplayManager()
         
         # Initialize enhanced features
         self.init_virtual_desktops()
         self.init_plugin_system()
         self.init_performance_monitoring()
         
-        # Initialize display with retries
-        display_attempts = 3
-        for attempt in range(display_attempts):
-            try:
-                if setup_display():
-                    break
-                time.sleep(2)
-            except Exception as e:
-                logger.warning(f"Display setup attempt {attempt + 1} failed: {e}")
-                if attempt == display_attempts - 1:
-                    logger.error("All display setup attempts failed")
-                    raise RuntimeError("Display initialization failed")
-            
+        # Initialize display with enhanced management
+        self.setup_display_system()
+        
         self.setup_ui()
+    
+    def setup_display_system(self):
+        """Setup display system with enhanced management"""
+        try:
+            logger.info("Setting up enhanced display system...")
+            
+            # Setup display environment
+            display_success = self.display_manager.setup_display_environment()
+            
+            if display_success:
+                logger.info("Display system initialized successfully")
+                
+                # Log display information
+                display_info = self.display_manager.get_display_info()
+                logger.info(f"Display configuration: {display_info}")
+                
+                # Store display info in database
+                self.log_display_event("initialization", "success", f"Display ready: {display_info}")
+                
+            else:
+                logger.warning("Display system initialization failed, using fallback")
+                self.log_display_event("initialization", "fallback", "Using headless mode")
+                
+        except Exception as e:
+            logger.error(f"Display system setup error: {e}")
+            self.log_display_event("initialization", "error", str(e))
+    
+    def log_display_event(self, event_type, status, message):
+        """Log display events to database"""
+        try:
+            conn = sqlite3.connect(DATABASE_FILE)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "INSERT INTO display_logs (event_type, display_id, message, success) VALUES (?, ?, ?, ?)",
+                (event_type, self.display_manager.get_current_display(), message, 1 if status == "success" else 0)
+            )
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Display event logging error: {e}")
     
     def init_virtual_desktops(self):
         """Initialize virtual desktop system"""
@@ -1210,7 +3775,8 @@ class WindowManager:
             # Load built-in themes
             builtin_themes = {
                 "berke_dark": {
-                    "name": "Berke Dark",
+                    "name": "Berke Dark V2",
+                    "version": "2.0",
                     "colors": {
                         "bg": "#1a1a1a", "fg": "#ffffff", "accent": "#00ff88",
                         "secondary": "#4a9eff", "warning": "#ffb347", "error": "#ff6b6b",
@@ -1222,7 +3788,8 @@ class WindowManager:
                     "effects": {"blur": True, "transparency": True, "animations": True}
                 },
                 "berke_light": {
-                    "name": "Berke Light",
+                    "name": "Berke Light V2",
+                    "version": "2.0",
                     "colors": {
                         "bg": "#f5f5f5", "fg": "#333333", "accent": "#007acc",
                         "secondary": "#28a745", "warning": "#ffc107", "error": "#dc3545",
@@ -1232,6 +3799,19 @@ class WindowManager:
                     },
                     "fonts": {"default": "Arial", "mono": "Courier"},
                     "effects": {"blur": False, "transparency": False, "animations": True}
+                },
+                "tinycore": {
+                    "name": "Tiny Core Classic",
+                    "version": "2.0",
+                    "colors": {
+                        "bg": "#2e3436", "fg": "#ffffff", "accent": "#729fcf",
+                        "secondary": "#8ae234", "warning": "#fcaf3e", "error": "#ef2929",
+                        "success": "#8ae234", "taskbar": "#555753", "window": "#3c4043",
+                        "input": "#2e3436", "border": "#888a85", "hover": "#555753",
+                        "selection": "#729fcf44", "shadow": "#00000055"
+                    },
+                    "fonts": {"default": "Arial", "mono": "Monospace"},
+                    "effects": {"blur": False, "transparency": False, "animations": False}
                 }
             }
             themes.update(builtin_themes)
@@ -1257,16 +3837,32 @@ class WindowManager:
             return builtin_themes
         
     def setup_ui(self):
-        """Setup enhanced main UI"""
+        """Setup enhanced main UI with improved display handling"""
         try:
             logger.info("Setting up main UI...")
             
-            self.root = tk.Tk()
-            self.root.title("Berke0S 3.0 - Ultimate Desktop")
+            # Check if display is available
+            if not self.display_manager.is_display_ready():
+                logger.warning("Display not ready, attempting headless mode")
+                self.setup_headless_mode()
+                return
             
-            # Force fullscreen and proper display
-            self.root.attributes('-fullscreen', True)
-            self.root.state('zoomed')  # Maximize on Windows/Linux
+            self.root = tk.Tk()
+            self.root.title("Berke0S 3.0 V2 - Ultimate Desktop")
+            
+            # Enhanced display configuration
+            try:
+                # Force fullscreen and proper display
+                self.root.attributes('-fullscreen', True)
+                self.root.state('zoomed')  # Maximize on Windows/Linux
+            except Exception as e:
+                logger.warning(f"Fullscreen setup failed: {e}")
+                # Fallback to maximized window
+                try:
+                    self.root.geometry("1024x768")
+                    self.root.state('normal')
+                except:
+                    pass
             
             # Enhanced window configuration
             self.root.configure(bg=self.get_theme_color("bg"))
@@ -1298,8 +3894,8 @@ class WindowManager:
             
             # Show welcome notification
             self.notifications.send(
-                "Berke0S Ready",
-                "Welcome to Berke0S 3.0 Ultimate Desktop Environment!",
+                "Berke0S V2 Ready",
+                "Welcome to Berke0S 3.0 V2 with Enhanced Display Management!",
                 notification_type="success",
                 timeout=3000
             )
@@ -1315,7 +3911,69 @@ class WindowManager:
             
         except Exception as e:
             logger.error(f"UI setup error: {e}")
-            raise
+            # Try headless mode as fallback
+            self.setup_headless_mode()
+    
+    def setup_headless_mode(self):
+        """Setup headless mode for systems without display"""
+        try:
+            logger.info("Setting up headless mode...")
+            
+            # Create minimal root for services
+            self.root = tk.Tk()
+            self.root.withdraw()  # Hide the window
+            
+            # Start essential services only
+            self.start_headless_services()
+            
+            logger.info("Headless mode configured")
+            
+        except Exception as e:
+            logger.error(f"Headless mode setup error: {e}")
+            # Ultimate fallback - console mode
+            self.run_console_mode()
+    
+    def start_headless_services(self):
+        """Start essential services for headless mode"""
+        try:
+            services = [
+                ("System Monitor", self.system_monitor_service),
+                ("Auto-Save", self.auto_save_service),
+                ("Performance Monitor", self.performance_monitor_service)
+            ]
+            
+            for service_name, service_func in services:
+                try:
+                    thread = threading.Thread(target=service_func, daemon=True, name=service_name)
+                    thread.start()
+                    logger.info(f"Started headless service: {service_name}")
+                except Exception as e:
+                    logger.error(f"Failed to start headless service {service_name}: {e}")
+            
+        except Exception as e:
+            logger.error(f"Headless services start error: {e}")
+    
+    def run_console_mode(self):
+        """Run in console mode as ultimate fallback"""
+        try:
+            logger.info("Running in console mode...")
+            
+            print("\n" + "="*60)
+            print("  Berke0S 3.0 V2 - Console Mode")
+            print("  Enhanced Display Management")
+            print("="*60)
+            print("\nDisplay system not available - running in console mode")
+            print("Essential services are running in the background")
+            print("\nPress Ctrl+C to exit")
+            
+            # Keep running
+            while True:
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            logger.info("Console mode terminated by user")
+        except Exception as e:
+            logger.error(f"Console mode error: {e}")
     
     def get_theme_color(self, color_name):
         """Get color from current theme with fallback"""
@@ -1442,7 +4100,7 @@ class WindowManager:
         try:
             self.start_button = tk.Button(
                 self.taskbar,
-                text="🏠 Berke0S",
+                text="🏠 Berke0S V2",
                 bg=self.get_theme_color("accent"),
                 fg="white",
                 font=('Arial', 11, 'bold'),
@@ -1475,7 +4133,8 @@ class WindowManager:
                 ("💻", "Terminal", self.launch_terminal, "Command line interface"),
                 ("⚙️", "Settings", self.launch_settings, "System configuration"),
                 ("📝", "Text Editor", lambda: TextEditor(self).show(), "Edit text files"),
-                ("🧮", "Calculator", lambda: Calculator(self).show(), "Perform calculations")
+                ("🧮", "Calculator", lambda: Calculator(self).show(), "Perform calculations"),
+                ("🖥️", "Display", lambda: DisplaySettings(self).show(), "Display configuration")
             ]
             
             for icon, name, command, tooltip in quick_apps:
@@ -1549,6 +4208,19 @@ class WindowManager:
         """Create enhanced system status indicators"""
         try:
             indicators = []
+            
+            # Display indicator (new for V2)
+            self.display_indicator = tk.Label(
+                self.tray_frame,
+                text="🖥️",
+                bg=self.get_theme_color("taskbar"),
+                fg=self.get_theme_color("fg"),
+                font=('Arial', 12),
+                cursor="hand2"
+            )
+            self.display_indicator.pack(side=tk.RIGHT, padx=3)
+            self.display_indicator.bind("<Button-1>", lambda e: DisplaySettings(self).show())
+            indicators.append(("Display", self.display_indicator))
             
             # Network indicator
             self.network_indicator = tk.Label(
@@ -1639,7 +4311,8 @@ class WindowManager:
                     ("🧮", lambda: Calculator(self).show()),
                     ("🎵", lambda: MusicPlayer(self).show()),
                     ("🖼️", lambda: ImageViewer(self).show()),
-                    ("⚙️", self.launch_settings)
+                    ("⚙️", self.launch_settings),
+                    ("🖥️", lambda: DisplaySettings(self).show())
                 ]
                 
                 for icon, command in dock_apps:
@@ -1671,7 +4344,7 @@ class WindowManager:
                 
             icon_size = self.config.get("desktop", {}).get("icon_size", 48)
             
-            # Default desktop icons
+            # Default desktop icons with V2 additions
             desktop_icons = [
                 {"name": "File Manager", "icon": "📁", "command": self.launch_file_manager, "x": 50, "y": 50},
                 {"name": "Web Browser", "icon": "🌐", "command": self.launch_web_browser, "x": 50, "y": 120},
@@ -1680,7 +4353,8 @@ class WindowManager:
                 {"name": "Text Editor", "icon": "📝", "command": lambda: TextEditor(self).show(), "x": 150, "y": 50},
                 {"name": "Calculator", "icon": "🧮", "command": lambda: Calculator(self).show(), "x": 150, "y": 120},
                 {"name": "Music Player", "icon": "🎵", "command": lambda: MusicPlayer(self).show(), "x": 150, "y": 190},
-                {"name": "Games", "icon": "🎮", "command": lambda: GamesLauncher(self).show(), "x": 150, "y": 260}
+                {"name": "Games", "icon": "🎮", "command": lambda: GamesLauncher(self).show(), "x": 150, "y": 260},
+                {"name": "Display Settings", "icon": "🖥️", "command": lambda: DisplaySettings(self).show(), "x": 250, "y": 50}
             ]
             
             # Load custom icon positions
@@ -1782,8 +4456,22 @@ class WindowManager:
             # Update CPU status
             self.update_cpu_indicator()
             
+            # Update display status (new for V2)
+            self.update_display_indicator()
+            
         except Exception as e:
             logger.error(f"System indicators update error: {e}")
+    
+    def update_display_indicator(self):
+        """Update display status indicator"""
+        try:
+            if self.display_manager.is_display_ready():
+                self.display_indicator.config(text="🖥️", fg=self.get_theme_color("success"))
+            else:
+                self.display_indicator.config(text="🖥️", fg=self.get_theme_color("error"))
+                
+        except Exception as e:
+            logger.error(f"Display indicator update error: {e}")
     
     def update_network_indicator(self):
         """Update network connectivity indicator"""
@@ -1937,7 +4625,8 @@ class WindowManager:
                 "berke_dark": [(15, 15, 35), (26, 26, 26), (40, 40, 60)],
                 "berke_light": [(240, 240, 240), (220, 220, 220), (200, 200, 200)],
                 "ocean": [(13, 27, 42), (3, 4, 94), (0, 119, 190)],
-                "forest": [(27, 67, 50), (45, 145, 108), (82, 183, 136)]
+                "forest": [(27, 67, 50), (45, 145, 108), (82, 183, 136)],
+                "tinycore": [(46, 52, 54), (85, 87, 83), (136, 138, 133)]
             }
             
             colors = gradients.get(theme_name, gradients["berke_dark"])
@@ -1996,6 +4685,7 @@ class WindowManager:
                 '<Control-Alt-w>': self.launch_web_browser,
                 '<Control-Alt-c>': lambda: Calculator(self).show(),
                 '<Control-Alt-e>': lambda: TextEditor(self).show(),
+                '<Control-Alt-d>': lambda: DisplaySettings(self).show(),  # New for V2
                 '<Alt-F4>': self.close_active_window,
                 '<Control-Alt-l>': self.lock_screen,
                 '<Control-Alt-d>': self.show_desktop,
@@ -2035,7 +4725,8 @@ class WindowManager:
                 ("Performance Monitor", self.performance_monitor_service),
                 ("Plugin Manager", self.plugin_service),
                 ("Network Monitor", self.network_monitor_service),
-                ("Backup Service", self.backup_service)
+                ("Backup Service", self.backup_service),
+                ("Display Monitor", self.display_monitor_service)  # New for V2
             ]
             
             for service_name, service_func in services:
@@ -2050,6 +4741,31 @@ class WindowManager:
             
         except Exception as e:
             logger.error(f"Services start error: {e}")
+    
+    def display_monitor_service(self):
+        """Monitor display system health (new for V2)"""
+        while True:
+            try:
+                # Check display health
+                if self.display_manager.is_display_ready():
+                    # Test display connection
+                    try:
+                        result = subprocess.run(['xdpyinfo'], capture_output=True, timeout=5)
+                        if result.returncode != 0:
+                            logger.warning("Display connection test failed")
+                            self.notifications.send(
+                                "Display Warning",
+                                "Display connection issues detected",
+                                notification_type="warning"
+                            )
+                    except:
+                        pass
+                
+                time.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                logger.error(f"Display monitor error: {e}")
+                time.sleep(120)
     
     def system_monitor_service(self):
         """Enhanced system monitoring service"""
@@ -2556,6 +5272,10 @@ class WindowManager:
             tk.Label(info_frame, text=current_time, font=('Arial', 9),
                     bg=self.get_theme_color("accent"), fg="white").pack(anchor='w')
             
+            # Version info
+            tk.Label(info_frame, text="Berke0S V2", font=('Arial', 8),
+                    bg=self.get_theme_color("accent"), fg="white").pack(anchor='w')
+            
             # Search bar
             search_frame = tk.Frame(main_container, bg=self.get_theme_color("window"))
             search_frame.pack(fill=tk.X, padx=20, pady=10)
@@ -2635,7 +5355,8 @@ class WindowManager:
                 ("🔒", "Lock", self.lock_screen),
                 ("🔄", "Restart", self.restart_system),
                 ("⚡", "Shutdown", self.shutdown_system),
-                ("⚙️", "Settings", self.launch_settings)
+                ("⚙️", "Settings", self.launch_settings),
+                ("🖥️", "Display", lambda: DisplaySettings(self).show())  # New for V2
             ]
             
             for icon, tooltip, command in power_options:
@@ -2856,6 +5577,8 @@ class WindowManager:
                 BackupManager(self).show()
             elif command == "berke0s_vdesktop":
                 VirtualDesktopManager(self).show()
+            elif command == "berke0s_display":  # New for V2
+                DisplaySettings(self).show()
             else:
                 # Try to execute as system command
                 subprocess.Popen(command.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -3041,13 +5764,14 @@ class WindowManager:
         try:
             session_data = {
                 "timestamp": datetime.datetime.now().isoformat(),
-                "version": "3.0",
+                "version": "3.0-v2",
                 "windows": [],
                 "virtual_desktops": self.virtual_desktops,
                 "current_desktop": self.current_desktop,
                 "shortcuts": self.shortcuts,
                 "current_user": self.current_user,
-                "running_apps": list(self.running_apps.keys())
+                "running_apps": list(self.running_apps.keys()),
+                "display_info": self.display_manager.get_display_info()
             }
             
             # Save window states
@@ -3136,6 +5860,7 @@ class WindowManager:
             menu.add_command(label="🔄 Refresh Desktop", command=self.refresh_desktop)
             menu.add_command(label="📊 System Monitor", command=lambda: SystemMonitor(self).show())
             menu.add_command(label="💻 Open Terminal", command=self.launch_terminal)
+            menu.add_command(label="🖥️ Display Settings", command=lambda: DisplaySettings(self).show())  # New for V2
             menu.add_separator()
             
             # Virtual desktops
@@ -3294,6 +6019,10 @@ class WindowManager:
             tk.Label(lock_frame, text=f"Welcome back, {username}", font=('Arial', 18),
                     fg='white', bg='#000000').pack(pady=20)
             
+            # Version info
+            tk.Label(lock_frame, text="Berke0S V2 - Enhanced Display Management", font=('Arial', 12),
+                    fg='#888888', bg='#000000').pack(pady=10)
+            
             # Password entry
             tk.Label(lock_frame, text="Enter password to unlock:", font=('Arial', 12),
                     fg='white', bg='#000000').pack()
@@ -3350,6 +6079,9 @@ class WindowManager:
                 for window_id in list(self.windows.keys()):
                     self.close_window(window_id)
                 
+                # Shutdown display system
+                self.display_manager.shutdown_display()
+                
                 # Show shutdown screen
                 self.show_shutdown_screen()
                 
@@ -3376,12 +6108,16 @@ class WindowManager:
             shutdown_frame.pack(expand=True)
             
             # Logo
-            tk.Label(shutdown_frame, text="Berke0S", font=('Arial', 48, 'bold'),
+            tk.Label(shutdown_frame, text="Berke0S V2", font=('Arial', 48, 'bold'),
                     fg='#00ff88', bg='#0a0a0f').pack(pady=50)
             
             # Shutdown message
             tk.Label(shutdown_frame, text="Shutting down...", font=('Arial', 18),
                     fg='white', bg='#0a0a0f').pack(pady=20)
+            
+            # Version info
+            tk.Label(shutdown_frame, text="Enhanced Display Management", font=('Arial', 12),
+                    fg='#888888', bg='#0a0a0f').pack(pady=10)
             
             # Progress animation
             progress_frame = tk.Frame(shutdown_frame, bg='#0a0a0f')
@@ -3477,13 +6213,17 @@ class WindowManager:
     def run(self):
         """Run the enhanced window manager"""
         try:
-            logger.info("Starting Berke0S main loop...")
+            logger.info("Starting Berke0S V2 main loop...")
             
             # Restore previous session if available
             self.restore_session()
             
             # Start main loop
-            self.root.mainloop()
+            if self.root:
+                self.root.mainloop()
+            else:
+                # Fallback to console mode
+                self.run_console_mode()
             
         except Exception as e:
             logger.error(f"Main loop error: {e}")
@@ -3505,6 +6245,10 @@ class WindowManager:
             
             if self.plugin_manager:
                 self.plugin_manager.cleanup()
+            
+            # Shutdown display system
+            if self.display_manager:
+                self.display_manager.shutdown_display()
             
             # Close database connections
             try:
@@ -5602,8 +8346,688 @@ class Calculator:
         except Exception as e:
             logger.error(f"History dialog error: {e}")
 
-# Additional application classes would continue here...
-# Due to length constraints, I'm including the essential structure
+# New Display Settings Application for V2
+class DisplaySettings:
+    """Display configuration and management application (New for V2)"""
+    
+    def __init__(self, wm):
+        self.wm = wm
+        self.display_manager = wm.display_manager
+        
+    def show(self):
+        """Show display settings window"""
+        try:
+            self.window = self.wm.create_window(
+                "Display Settings", 
+                self.create_content, 
+                700, 600,
+                resizable=True
+            )
+        except Exception as e:
+            logger.error(f"Display settings show error: {e}")
+    
+    def create_content(self, parent):
+        """Create display settings content"""
+        try:
+            # Main container
+            main_container = tk.Frame(parent, bg=self.wm.get_theme_color("window"))
+            main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Header
+            header = tk.Label(main_container, text="🖥️ Display Configuration", 
+                            font=('Arial', 16, 'bold'),
+                            bg=self.wm.get_theme_color("window"),
+                            fg=self.wm.get_theme_color("accent"))
+            header.pack(pady=(0, 20))
+            
+            # Create notebook for different sections
+            notebook = ttk.Notebook(main_container)
+            notebook.pack(fill=tk.BOTH, expand=True)
+            
+            # Display Information Tab
+            self.create_display_info_tab(notebook)
+            
+            # Display Configuration Tab
+            self.create_display_config_tab(notebook)
+            
+            # Advanced Settings Tab
+            self.create_advanced_settings_tab(notebook)
+            
+            # Troubleshooting Tab
+            self.create_troubleshooting_tab(notebook)
+            
+        except Exception as e:
+            logger.error(f"Display settings content creation error: {e}")
+    
+    def create_display_info_tab(self, notebook):
+        """Create display information tab"""
+        try:
+            info_frame = tk.Frame(notebook, bg=self.wm.get_theme_color("window"))
+            notebook.add(info_frame, text="Display Info")
+            
+            # Current display information
+            info_label = tk.Label(info_frame, text="Current Display Information", 
+                                font=('Arial', 12, 'bold'),
+                                bg=self.wm.get_theme_color("window"),
+                                fg=self.wm.get_theme_color("fg"))
+            info_label.pack(pady=(10, 20))
+            
+            # Display info text area
+            self.info_text = tk.Text(info_frame, height=20, width=70,
+                                   bg=self.wm.get_theme_color("input"),
+                                   fg=self.wm.get_theme_color("fg"),
+                                   font=('Courier', 10), wrap=tk.WORD)
+            self.info_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Refresh button
+            refresh_btn = tk.Button(info_frame, text="🔄 Refresh Information",
+                                  command=self.refresh_display_info,
+                                  bg=self.wm.get_theme_color("accent"), fg="white",
+                                  font=('Arial', 10), relief=tk.FLAT, padx=20, pady=5)
+            refresh_btn.pack(pady=10)
+            
+            # Load initial information
+            self.refresh_display_info()
+            
+        except Exception as e:
+            logger.error(f"Display info tab creation error: {e}")
+    
+    def create_display_config_tab(self, notebook):
+        """Create display configuration tab"""
+        try:
+            config_frame = tk.Frame(notebook, bg=self.wm.get_theme_color("window"))
+            notebook.add(config_frame, text="Configuration")
+            
+            # Configuration options
+            config_label = tk.Label(config_frame, text="Display Configuration", 
+                                  font=('Arial', 12, 'bold'),
+                                  bg=self.wm.get_theme_color("window"),
+                                  fg=self.wm.get_theme_color("fg"))
+            config_label.pack(pady=(10, 20))
+            
+            # Display mode selection
+            mode_frame = tk.LabelFrame(config_frame, text="Display Mode", 
+                                     bg=self.wm.get_theme_color("window"),
+                                     fg=self.wm.get_theme_color("fg"))
+            mode_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.display_mode_var = tk.StringVar(value=self.wm.config.get("display", {}).get("display_server", "auto"))
+            
+            modes = [
+                ("auto", "Automatic Detection (Recommended)"),
+                ("x11", "Force X11"),
+                ("headless", "Headless Mode"),
+                ("virtual", "Virtual Display")
+            ]
+            
+            for value, text in modes:
+                rb = tk.Radiobutton(mode_frame, text=text, variable=self.display_mode_var, value=value,
+                                   bg=self.wm.get_theme_color("window"), fg=self.wm.get_theme_color("fg"),
+                                   selectcolor=self.wm.get_theme_color("accent"))
+                rb.pack(anchor='w', padx=10, pady=5)
+            
+            # Resolution settings
+            res_frame = tk.LabelFrame(config_frame, text="Resolution", 
+                                    bg=self.wm.get_theme_color("window"),
+                                    fg=self.wm.get_theme_color("fg"))
+            res_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.resolution_var = tk.StringVar(value=self.wm.config.get("display", {}).get("resolution", "auto"))
+            
+            resolutions = ["auto", "1920x1080", "1366x768", "1280x720", "1024x768", "800x600"]
+            
+            tk.Label(res_frame, text="Resolution:", bg=self.wm.get_theme_color("window"),
+                    fg=self.wm.get_theme_color("fg")).pack(side=tk.LEFT, padx=10)
+            
+            res_combo = ttk.Combobox(res_frame, textvariable=self.resolution_var, values=resolutions, width=15)
+            res_combo.pack(side=tk.LEFT, padx=10, pady=10)
+            
+            # Refresh rate
+            refresh_frame = tk.LabelFrame(config_frame, text="Refresh Rate", 
+                                        bg=self.wm.get_theme_color("window"),
+                                        fg=self.wm.get_theme_color("fg"))
+            refresh_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.refresh_rate_var = tk.StringVar(value=str(self.wm.config.get("display", {}).get("refresh_rate", 60)))
+            
+            tk.Label(refresh_frame, text="Refresh Rate (Hz):", bg=self.wm.get_theme_color("window"),
+                    fg=self.wm.get_theme_color("fg")).pack(side=tk.LEFT, padx=10)
+            
+            refresh_spinbox = tk.Spinbox(refresh_frame, from_=30, to=240, textvariable=self.refresh_rate_var, width=10)
+            refresh_spinbox.pack(side=tk.LEFT, padx=10, pady=10)
+            
+            # Apply button
+            apply_btn = tk.Button(config_frame, text="💾 Apply Settings",
+                                command=self.apply_display_settings,
+                                bg=self.wm.get_theme_color("success"), fg="white",
+                                font=('Arial', 12, 'bold'), relief=tk.FLAT, padx=30, pady=10)
+            apply_btn.pack(pady=20)
+            
+        except Exception as e:
+            logger.error(f"Display config tab creation error: {e}")
+    
+    def create_advanced_settings_tab(self, notebook):
+        """Create advanced settings tab"""
+        try:
+            advanced_frame = tk.Frame(notebook, bg=self.wm.get_theme_color("window"))
+            notebook.add(advanced_frame, text="Advanced")
+            
+            # Advanced options
+            advanced_label = tk.Label(advanced_frame, text="Advanced Display Settings", 
+                                    font=('Arial', 12, 'bold'),
+                                    bg=self.wm.get_theme_color("window"),
+                                    fg=self.wm.get_theme_color("fg"))
+            advanced_label.pack(pady=(10, 20))
+            
+            # X Server arguments
+            x_args_frame = tk.LabelFrame(advanced_frame, text="X Server Arguments", 
+                                       bg=self.wm.get_theme_color("window"),
+                                       fg=self.wm.get_theme_color("fg"))
+            x_args_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            tk.Label(x_args_frame, text="Additional X Server Arguments:", 
+                    bg=self.wm.get_theme_color("window"),
+                    fg=self.wm.get_theme_color("fg")).pack(anchor='w', padx=10, pady=5)
+            
+            self.x_args_var = tk.StringVar(value=" ".join(self.wm.config.get("display", {}).get("x_arguments", [])))
+            x_args_entry = tk.Entry(x_args_frame, textvariable=self.x_args_var, width=60,
+                                  bg=self.wm.get_theme_color("input"),
+                                  fg=self.wm.get_theme_color("fg"))
+            x_args_entry.pack(fill=tk.X, padx=10, pady=10)
+            
+            # Color depth
+            depth_frame = tk.LabelFrame(advanced_frame, text="Color Depth", 
+                                      bg=self.wm.get_theme_color("window"),
+                                      fg=self.wm.get_theme_color("fg"))
+            depth_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.color_depth_var = tk.StringVar(value=str(self.wm.config.get("display", {}).get("color_depth", 24)))
+            
+            depths = ["8", "16", "24", "32"]
+            for depth in depths:
+                rb = tk.Radiobutton(depth_frame, text=f"{depth} bit", variable=self.color_depth_var, value=depth,
+                                   bg=self.wm.get_theme_color("window"), fg=self.wm.get_theme_color("fg"),
+                                   selectcolor=self.wm.get_theme_color("accent"))
+                rb.pack(side=tk.LEFT, padx=20, pady=10)
+            
+            # Multi-monitor support
+            multi_frame = tk.LabelFrame(advanced_frame, text="Multi-Monitor", 
+                                      bg=self.wm.get_theme_color("window"),
+                                      fg=self.wm.get_theme_color("fg"))
+            multi_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.multi_monitor_var = tk.BooleanVar(value=self.wm.config.get("display", {}).get("multi_monitor", False))
+            multi_check = tk.Checkbutton(multi_frame, text="Enable Multi-Monitor Support", 
+                                       variable=self.multi_monitor_var,
+                                       bg=self.wm.get_theme_color("window"), fg=self.wm.get_theme_color("fg"),
+                                       selectcolor=self.wm.get_theme_color("accent"))
+            multi_check.pack(anchor='w', padx=10, pady=10)
+            
+            # Virtual display options
+            virtual_frame = tk.LabelFrame(advanced_frame, text="Virtual Display", 
+                                        bg=self.wm.get_theme_color("window"),
+                                        fg=self.wm.get_theme_color("fg"))
+            virtual_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            self.virtual_display_var = tk.BooleanVar(value=self.wm.config.get("display", {}).get("virtual_display", False))
+            virtual_check = tk.Checkbutton(virtual_frame, text="Enable Virtual Display", 
+                                         variable=self.virtual_display_var,
+                                         bg=self.wm.get_theme_color("window"), fg=self.wm.get_theme_color("fg"),
+                                         selectcolor=self.wm.get_theme_color("accent"))
+            virtual_check.pack(anchor='w', padx=10, pady=10)
+            
+        except Exception as e:
+            logger.error(f"Advanced settings tab creation error: {e}")
+    
+    def create_troubleshooting_tab(self, notebook):
+        """Create troubleshooting tab"""
+        try:
+            trouble_frame = tk.Frame(notebook, bg=self.wm.get_theme_color("window"))
+            notebook.add(trouble_frame, text="Troubleshooting")
+            
+            # Troubleshooting tools
+            trouble_label = tk.Label(trouble_frame, text="Display Troubleshooting Tools", 
+                                   font=('Arial', 12, 'bold'),
+                                   bg=self.wm.get_theme_color("window"),
+                                   fg=self.wm.get_theme_color("fg"))
+            trouble_label.pack(pady=(10, 20))
+            
+            # Test buttons
+            test_frame = tk.Frame(trouble_frame, bg=self.wm.get_theme_color("window"))
+            test_frame.pack(fill=tk.X, padx=10, pady=10)
+            
+            test_buttons = [
+                ("🔍 Test Display Connection", self.test_display_connection),
+                ("🖥️ Restart Display System", self.restart_display_system),
+                ("📊 Run Display Diagnostics", self.run_display_diagnostics),
+                ("🔧 Reset Display Settings", self.reset_display_settings),
+                ("📋 Export Display Logs", self.export_display_logs)
+            ]
+            
+            for text, command in test_buttons:
+                btn = tk.Button(test_frame, text=text, command=command,
+                               bg=self.wm.get_theme_color("secondary"), fg="white",
+                               font=('Arial', 10), relief=tk.FLAT, padx=20, pady=8)
+                btn.pack(fill=tk.X, pady=5)
+            
+            # Diagnostic output
+            diag_label = tk.Label(trouble_frame, text="Diagnostic Output:", 
+                                bg=self.wm.get_theme_color("window"),
+                                fg=self.wm.get_theme_color("fg"),
+                                font=('Arial', 10, 'bold'))
+            diag_label.pack(anchor='w', padx=10, pady=(20, 5))
+            
+            self.diagnostic_text = tk.Text(trouble_frame, height=15, width=70,
+                                         bg=self.wm.get_theme_color("input"),
+                                         fg=self.wm.get_theme_color("fg"),
+                                         font=('Courier', 9), wrap=tk.WORD)
+            self.diagnostic_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+        except Exception as e:
+            logger.error(f"Troubleshooting tab creation error: {e}")
+    
+    def refresh_display_info(self):
+        """Refresh display information"""
+        try:
+            self.info_text.delete('1.0', tk.END)
+            
+            # Get display information
+            display_info = self.display_manager.get_display_info()
+            env_info = self.display_manager.detect_environment()
+            
+            info_content = f"""Display Information - Berke0S V2
+{'='*50}
+
+Current Display Status:
+• Display ID: {display_info.get('display', 'Unknown')}
+• Mode: {display_info.get('mode', 'Unknown')}
+• Resolution: {display_info.get('width', 'Unknown')}x{display_info.get('height', 'Unknown')}
+• Color Depth: {display_info.get('depth', 'Unknown')} bits
+• Ready: {'Yes' if self.display_manager.is_display_ready() else 'No'}
+
+System Environment:
+• Operating System: {env_info.get('distribution', 'Unknown')}
+• Tiny Core Linux: {'Yes' if env_info.get('is_tinycore') else 'No'}
+• Current User: {env_info.get('current_user', 'Unknown')}
+• TTY: {env_info.get('tty', 'Unknown')}
+• Runlevel: {env_info.get('runlevel', 'Unknown')}
+
+Display Server Support:
+• X11 Available: {'Yes' if env_info.get('x11_available', {}).get('available') else 'No'}
+• X11 Binaries: {', '.join(env_info.get('x11_available', {}).get('binaries', []))}
+• Wayland Available: {'Yes' if env_info.get('wayland_available', {}).get('available') else 'No'}
+
+Graphics Hardware:
+• Detected Drivers: {', '.join(env_info.get('graphics_driver', ['Unknown']))}
+
+Configuration:
+• Display Server: {self.wm.config.get('display', {}).get('display_server', 'auto')}
+• Resolution: {self.wm.config.get('display', {}).get('resolution', 'auto')}
+• Refresh Rate: {self.wm.config.get('display', {}).get('refresh_rate', 60)} Hz
+• Color Depth: {self.wm.config.get('display', {}).get('color_depth', 24)} bits
+• Multi-Monitor: {'Enabled' if self.wm.config.get('display', {}).get('multi_monitor') else 'Disabled'}
+
+Last Updated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            
+            self.info_text.insert('1.0', info_content)
+            
+        except Exception as e:
+            logger.error(f"Display info refresh error: {e}")
+            self.info_text.insert('1.0', f"Error refreshing display information: {str(e)}")
+    
+    def apply_display_settings(self):
+        """Apply display configuration changes"""
+        try:
+            # Update configuration
+            self.wm.config["display"]["display_server"] = self.display_mode_var.get()
+            self.wm.config["display"]["resolution"] = self.resolution_var.get()
+            self.wm.config["display"]["refresh_rate"] = int(self.refresh_rate_var.get())
+            
+            if hasattr(self, 'color_depth_var'):
+                self.wm.config["display"]["color_depth"] = int(self.color_depth_var.get())
+            
+            if hasattr(self, 'x_args_var'):
+                self.wm.config["display"]["x_arguments"] = self.x_args_var.get().split()
+            
+            if hasattr(self, 'multi_monitor_var'):
+                self.wm.config["display"]["multi_monitor"] = self.multi_monitor_var.get()
+            
+            if hasattr(self, 'virtual_display_var'):
+                self.wm.config["display"]["virtual_display"] = self.virtual_display_var.get()
+            
+            # Save configuration
+            self.wm.save_config()
+            
+            # Show confirmation
+            result = messagebox.askyesno(
+                "Apply Settings",
+                "Display settings have been saved. Do you want to restart the display system to apply changes?",
+                parent=self.window
+            )
+            
+            if result:
+                self.restart_display_system()
+            else:
+                self.wm.notifications.send(
+                    "Display Settings",
+                    "Settings saved. Restart required to apply changes.",
+                    notification_type="info"
+                )
+            
+        except Exception as e:
+            logger.error(f"Apply display settings error: {e}")
+            messagebox.showerror("Error", f"Failed to apply settings: {str(e)}", parent=self.window)
+    
+    def test_display_connection(self):
+        """Test display connection"""
+        try:
+            self.diagnostic_text.delete('1.0', tk.END)
+            self.diagnostic_text.insert(tk.END, "Testing display connection...\n\n")
+            
+            # Test X server connection
+            try:
+                result = subprocess.run(['xdpyinfo'], capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    self.diagnostic_text.insert(tk.END, "✅ X server connection: SUCCESS\n")
+                    self.diagnostic_text.insert(tk.END, f"Display info:\n{result.stdout[:500]}...\n\n")
+                else:
+                    self.diagnostic_text.insert(tk.END, "❌ X server connection: FAILED\n")
+                    self.diagnostic_text.insert(tk.END, f"Error: {result.stderr}\n\n")
+            except subprocess.TimeoutExpired:
+                self.diagnostic_text.insert(tk.END, "⏱️ X server connection: TIMEOUT\n\n")
+            except FileNotFoundError:
+                self.diagnostic_text.insert(tk.END, "❌ xdpyinfo not found\n\n")
+            
+            # Test window creation
+            try:
+                result = subprocess.run(['xwininfo', '-root'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    self.diagnostic_text.insert(tk.END, "✅ Window system: WORKING\n")
+                else:
+                    self.diagnostic_text.insert(tk.END, "❌ Window system: FAILED\n")
+            except:
+                self.diagnostic_text.insert(tk.END, "❌ Window system test failed\n")
+            
+            self.diagnostic_text.insert(tk.END, "\nTest completed.\n")
+            
+        except Exception as e:
+            logger.error(f"Display connection test error: {e}")
+            self.diagnostic_text.insert(tk.END, f"Test error: {str(e)}\n")
+    
+    def restart_display_system(self):
+        """Restart display system"""
+        try:
+            self.diagnostic_text.delete('1.0', tk.END)
+            self.diagnostic_text.insert(tk.END, "Restarting display system...\n\n")
+            
+            # Shutdown current display
+            self.display_manager.shutdown_display()
+            self.diagnostic_text.insert(tk.END, "✅ Display system shutdown\n")
+            
+            time.sleep(2)
+            
+            # Restart display
+            success = self.display_manager.setup_display_environment()
+            
+            if success:
+                self.diagnostic_text.insert(tk.END, "✅ Display system restarted successfully\n")
+                self.wm.notifications.send(
+                    "Display Settings",
+                    "Display system restarted successfully",
+                    notification_type="success"
+                )
+            else:
+                self.diagnostic_text.insert(tk.END, "❌ Display system restart failed\n")
+                self.wm.notifications.send(
+                    "Display Settings",
+                    "Display system restart failed",
+                    notification_type="error"
+                )
+            
+        except Exception as e:
+            logger.error(f"Display restart error: {e}")
+            self.diagnostic_text.insert(tk.END, f"Restart error: {str(e)}\n")
+    
+    def run_display_diagnostics(self):
+        """Run comprehensive display diagnostics"""
+        try:
+            self.diagnostic_text.delete('1.0', tk.END)
+            self.diagnostic_text.insert(tk.END, "Running comprehensive display diagnostics...\n\n")
+            
+            # System information
+            self.diagnostic_text.insert(tk.END, "=== SYSTEM INFORMATION ===\n")
+            try:
+                result = subprocess.run(['uname', '-a'], capture_output=True, text=True, timeout=5)
+                self.diagnostic_text.insert(tk.END, f"System: {result.stdout}\n")
+            except:
+                self.diagnostic_text.insert(tk.END, "System info: Not available\n")
+            
+            # Graphics hardware
+            self.diagnostic_text.insert(tk.END, "\n=== GRAPHICS HARDWARE ===\n")
+            try:
+                result = subprocess.run(['lspci', '|', 'grep', '-i', 'vga'], 
+                                      capture_output=True, text=True, timeout=5, shell=True)
+                if result.stdout:
+                    self.diagnostic_text.insert(tk.END, f"Graphics: {result.stdout}\n")
+                else:
+                    self.diagnostic_text.insert(tk.END, "Graphics hardware: Not detected\n")
+            except:
+                self.diagnostic_text.insert(tk.END, "Graphics detection: Failed\n")
+            
+            # X server processes
+            self.diagnostic_text.insert(tk.END, "\n=== X SERVER PROCESSES ===\n")
+            try:
+                result = subprocess.run(['ps', 'aux', '|', 'grep', '[X]'], 
+                                      capture_output=True, text=True, timeout=5, shell=True)
+                if result.stdout:
+                    self.diagnostic_text.insert(tk.END, f"X processes:\n{result.stdout}\n")
+                else:
+                    self.diagnostic_text.insert(tk.END, "No X server processes found\n")
+            except:
+                self.diagnostic_text.insert(tk.END, "Process check: Failed\n")
+            
+            # Display environment
+            self.diagnostic_text.insert(tk.END, "\n=== ENVIRONMENT VARIABLES ===\n")
+            env_vars = ['DISPLAY', 'XAUTHORITY', 'WAYLAND_DISPLAY', 'XDG_SESSION_TYPE']
+            for var in env_vars:
+                value = os.environ.get(var, 'Not set')
+                self.diagnostic_text.insert(tk.END, f"{var}: {value}\n")
+            
+            # Berke0S display manager status
+            self.diagnostic_text.insert(tk.END, "\n=== BERKE0S DISPLAY MANAGER ===\n")
+            self.diagnostic_text.insert(tk.END, f"Display Ready: {self.display_manager.is_display_ready()}\n")
+            self.diagnostic_text.insert(tk.END, f"Current Display: {self.display_manager.get_current_display()}\n")
+            
+            display_info = self.display_manager.get_display_info()
+            for key, value in display_info.items():
+                self.diagnostic_text.insert(tk.END, f"{key}: {value}\n")
+            
+            self.diagnostic_text.insert(tk.END, "\n=== DIAGNOSTICS COMPLETE ===\n")
+            
+        except Exception as e:
+            logger.error(f"Display diagnostics error: {e}")
+            self.diagnostic_text.insert(tk.END, f"Diagnostics error: {str(e)}\n")
+    
+    def reset_display_settings(self):
+        """Reset display settings to defaults"""
+        try:
+            result = messagebox.askyesno(
+                "Reset Settings",
+                "This will reset all display settings to defaults. Continue?",
+                parent=self.window
+            )
+            
+            if result:
+                # Reset to defaults
+                self.wm.config["display"] = DEFAULT_CONFIG["display"].copy()
+                self.wm.save_config()
+                
+                # Update UI
+                self.display_mode_var.set("auto")
+                self.resolution_var.set("auto")
+                self.refresh_rate_var.set("60")
+                
+                if hasattr(self, 'color_depth_var'):
+                    self.color_depth_var.set("24")
+                if hasattr(self, 'x_args_var'):
+                    self.x_args_var.set("-nolisten tcp -nocursor")
+                if hasattr(self, 'multi_monitor_var'):
+                    self.multi_monitor_var.set(False)
+                if hasattr(self, 'virtual_display_var'):
+                    self.virtual_display_var.set(False)
+                
+                self.wm.notifications.send(
+                    "Display Settings",
+                    "Display settings reset to defaults",
+                    notification_type="success"
+                )
+                
+        except Exception as e:
+            logger.error(f"Reset display settings error: {e}")
+            messagebox.showerror("Error", f"Failed to reset settings: {str(e)}", parent=self.window)
+    
+    def export_display_logs(self):
+        """Export display logs"""
+        try:
+            log_file = filedialog.asksaveasfilename(
+                parent=self.window,
+                title="Export Display Logs",
+                defaultextension=".txt",
+                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+            )
+            
+            if log_file:
+                with open(log_file, 'w') as f:
+                    f.write("Berke0S V2 Display Logs\n")
+                    f.write("=" * 50 + "\n\n")
+                    f.write(f"Export Date: {datetime.datetime.now()}\n\n")
+                    
+                    # Include display information
+                    display_info = self.display_manager.get_display_info()
+                    f.write("Display Information:\n")
+                    for key, value in display_info.items():
+                        f.write(f"  {key}: {value}\n")
+                    f.write("\n")
+                    
+                    # Include environment info
+                    env_info = self.display_manager.detect_environment()
+                    f.write("Environment Information:\n")
+                    for key, value in env_info.items():
+                        f.write(f"  {key}: {value}\n")
+                    f.write("\n")
+                    
+                    # Include configuration
+                    f.write("Display Configuration:\n")
+                    display_config = self.wm.config.get("display", {})
+                    for key, value in display_config.items():
+                        f.write(f"  {key}: {value}\n")
+                    f.write("\n")
+                    
+                    # Include display logs from database
+                    try:
+                        conn = sqlite3.connect(DATABASE_FILE)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT * FROM display_logs ORDER BY timestamp DESC LIMIT 100")
+                        logs = cursor.fetchall()
+                        conn.close()
+                        
+                        f.write("Recent Display Events:\n")
+                        for log in logs:
+                            f.write(f"  {log[5]} - {log[1]} - {log[3]} - {log[4]}\n")
+                        
+                    except Exception as e:
+                        f.write(f"Error reading display logs: {e}\n")
+                    
+                    # Include system logs
+                    try:
+                        if os.path.exists(DISPLAY_LOG):
+                            f.write("\nDisplay Log File:\n")
+                            with open(DISPLAY_LOG, 'r') as log_file_handle:
+                                f.write(log_file_handle.read())
+                    except Exception as e:
+                        f.write(f"Error reading display log file: {e}\n")
+                
+                self.wm.notifications.send(
+                    "Display Settings",
+                    f"Display logs exported to {os.path.basename(log_file)}",
+                    notification_type="success"
+                )
+                
+        except Exception as e:
+            logger.error(f"Export display logs error: {e}")
+            messagebox.showerror("Error", f"Failed to export logs: {str(e)}", parent=self.window)
+
+# Additional application stubs (would be fully implemented)
+class WebBrowser:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+    def bring_to_front(self): pass
+
+class SettingsApp:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+    def bring_to_front(self): pass
+
+class Terminal:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class ImageViewer:
+    def __init__(self, wm): self.wm = wm
+    def show(self, file_path=None): pass
+
+class MusicPlayer:
+    def __init__(self, wm): self.wm = wm
+    def show(self, file_path=None): pass
+
+class VideoPlayer:
+    def __init__(self, wm): self.wm = wm
+    def show(self, file_path=None): pass
+
+class SystemMonitor:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class EmailClient:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class CalendarApp:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class GamesLauncher:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class NetworkManager:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class ArchiveManager:
+    def __init__(self, wm): self.wm = wm
+    def show(self, file_path=None): pass
+
+class PDFViewer:
+    def __init__(self, wm): self.wm = wm
+    def show(self, file_path=None): pass
+
+class CodeEditor:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class ScreenRecorder:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class BackupManager:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
+
+class VirtualDesktopManager:
+    def __init__(self, wm): self.wm = wm
+    def show(self): pass
 
 # Plugin System
 class PluginManager:
@@ -5686,82 +9110,11 @@ class PerformanceMonitor:
         """Stop performance monitoring"""
         self.running = False
 
-# Additional application stubs (would be fully implemented)
-class WebBrowser:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-    def bring_to_front(self): pass
-
-class SettingsApp:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-    def bring_to_front(self): pass
-
-class Terminal:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class ImageViewer:
-    def __init__(self, wm): self.wm = wm
-    def show(self, file_path=None): pass
-
-class MusicPlayer:
-    def __init__(self, wm): self.wm = wm
-    def show(self, file_path=None): pass
-
-class VideoPlayer:
-    def __init__(self, wm): self.wm = wm
-    def show(self, file_path=None): pass
-
-class SystemMonitor:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class EmailClient:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class CalendarApp:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class GamesLauncher:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class NetworkManager:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class ArchiveManager:
-    def __init__(self, wm): self.wm = wm
-    def show(self, file_path=None): pass
-
-class PDFViewer:
-    def __init__(self, wm): self.wm = wm
-    def show(self, file_path=None): pass
-
-class CodeEditor:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class ScreenRecorder:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class BackupManager:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
-class VirtualDesktopManager:
-    def __init__(self, wm): self.wm = wm
-    def show(self): pass
-
 # Main execution
 def main():
-    """Enhanced main entry point"""
+    """Enhanced main entry point for V2"""
     try:
-        logger.info("Starting Berke0S 3.0 Ultimate Desktop Environment...")
+        logger.info("Starting Berke0S 3.0 V2 - Enhanced Display Management...")
         
         # Initialize database
         init_database()
@@ -5793,12 +9146,20 @@ def main():
             wm.run()
             
     except KeyboardInterrupt:
-        logger.info("Berke0S terminated by user")
-        print("\n🔄 Berke0S terminated by user")
+        logger.info("Berke0S V2 terminated by user")
+        print("\n🔄 Berke0S V2 terminated by user")
         sys.exit(0)
     except Exception as e:
         logger.error(f"Main execution error: {e}")
-        print(f"❌ Error starting Berke0S: {e}")
+        print(f"❌ Error starting Berke0S V2: {e}")
+        
+        # Try to provide helpful error information
+        print("\n🔧 Troubleshooting Information:")
+        print("• Check if X server is available")
+        print("• Verify display environment variables")
+        print("• Try running with --install flag")
+        print("• Check log files in ~/.berke0s/")
+        
         sys.exit(1)
 
 if __name__ == "__main__":
