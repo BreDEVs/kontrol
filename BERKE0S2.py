@@ -1,4 +1,12 @@
-#BERKE0S - A lightweight, customizable desktop environment for TinyCore Linux 2.0 by Berke Oruç
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+BERKE0S - Advanced Desktop Operating System
+Created by: Berke Oruç
+Version: 2.0
+License: MIT
+"""
+
 import os
 import sys
 import time
@@ -8,6355 +16,6600 @@ import threading
 import signal
 import psutil
 import socket
-import bcrypt
+import hashlib
 import re
 import shutil
 import getpass
 import datetime
-import hashlib
 import logging
 import queue
 import math
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
-from PIL import Image, ImageTk, ImageGrab
-import pty
-import fcntl
-import termios
 import uuid
 import base64
-from io import BytesIO
-from urllib.parse import quote
 import zipfile
 import tarfile
 import glob
-import pwd
-import grp
 import stat
-import imaplib
-import email
-import smtplib
-from email.message import EmailMessage
-import requests
-from flask import Flask, request, jsonify
+import calendar
+import random
+import sqlite3
+from pathlib import Path
+from urllib.parse import quote, unquote
+from io import BytesIO
+import tempfile
+import configparser
+import mimetypes
 
-### --- CONFIGURATION AND INITIALIZATION ---
-CONFIG_DIR = "/home/tc/.berke0s"
-CONFIG_FILE = f"{CONFIG_DIR}/config.json"
-SESSION_FILE = f"{CONFIG_DIR}/session.json"
-EULA_FILE = f"{CONFIG_DIR}/eula.txt"
-LOG_FILE = f"{CONFIG_DIR}/berke0s.log"
-THEME_DIR = f"{CONFIG_DIR}/themes"
-PLUGIN_DIR = f"{CONFIG_DIR}/plugins"
+# Display ve GUI imports - hata yakalama ile
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog, simpledialog, colorchooser
+    from tkinter import font as tkFont
+    GUI_AVAILABLE = True
+except ImportError:
+    GUI_AVAILABLE = False
+    print("GUI libraries not available, running in console mode")
+
+try:
+    from PIL import Image, ImageTk, ImageDraw, ImageFilter, ImageEnhance
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("PIL not available, using basic graphics")
+
+# Display environment setup
+def setup_display():
+    """Setup display environment for GUI"""
+    try:
+        # X server kontrolü
+        if 'DISPLAY' not in os.environ:
+            print("Setting up display environment...")
+            
+            # Xvfb (Virtual framebuffer) başlat
+            try:
+                subprocess.run(['which', 'Xvfb'], check=True, capture_output=True)
+                subprocess.Popen(['Xvfb', ':99', '-screen', '0', '1024x768x24'], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                os.environ['DISPLAY'] = ':99'
+                time.sleep(2)
+                print("Virtual display started on :99")
+            except:
+                # Fiziksel display dene
+                for display in [':0', ':1', ':10']:
+                    try:
+                        os.environ['DISPLAY'] = display
+                        subprocess.run(['xset', 'q'], check=True, capture_output=True)
+                        print(f"Using display {display}")
+                        break
+                    except:
+                        continue
+                else:
+                    # Console mode
+                    print("No display available, starting in console mode")
+                    return False
+        
+        # X server test
+        try:
+            subprocess.run(['xset', 'q'], check=True, capture_output=True)
+            return True
+        except:
+            print("Display test failed, trying alternative methods...")
+            
+            # Startx dene
+            try:
+                subprocess.Popen(['startx'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(5)
+                return True
+            except:
+                pass
+                
+            # Xinit dene
+            try:
+                subprocess.Popen(['xinit'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(5)
+                return True
+            except:
+                pass
+                
+            return False
+            
+    except Exception as e:
+        print(f"Display setup error: {e}")
+        return False
+
+# Console mode fallback
+class ConsoleMode:
+    """Console mode interface when GUI is not available"""
+    
+    def __init__(self):
+        self.running = True
+        self.current_user = None
+        
+    def start(self):
+        """Start console interface"""
+        self.show_banner()
+        self.login()
+        self.main_menu()
+        
+    def show_banner(self):
+        """Show Berke0S banner"""
+        banner = """
+╔══════════════════════════════════════════════════════════════╗
+║                          BERKE0S                             ║
+║                    Advanced Desktop OS                       ║
+║                   Created by: Berke Oruç                     ║
+║                        Version 2.0                          ║
+╚══════════════════════════════════════════════════════════════╝
+        """
+        print(banner)
+        
+    def login(self):
+        """Console login"""
+        while True:
+            print("\n=== BERKE0S LOGIN ===")
+            username = input("Username: ")
+            password = getpass.getpass("Password: ")
+            
+            if self.authenticate(username, password):
+                self.current_user = username
+                print(f"Welcome, {username}!")
+                break
+            else:
+                print("Invalid credentials!")
+                
+    def authenticate(self, username, password):
+        """Simple authentication"""
+        # Default user for demo
+        return username == "berke" and password == "berke0s"
+        
+    def main_menu(self):
+        """Main console menu"""
+        while self.running:
+            print(f"\n=== BERKE0S CONSOLE - User: {self.current_user} ===")
+            print("1. File Manager")
+            print("2. System Info")
+            print("3. Process Manager")
+            print("4. Network Tools")
+            print("5. Text Editor")
+            print("6. Calculator")
+            print("7. System Settings")
+            print("8. Install GUI Mode")
+            print("9. Logout")
+            print("0. Shutdown")
+            
+            choice = input("\nSelect option: ")
+            
+            if choice == "1":
+                self.file_manager()
+            elif choice == "2":
+                self.system_info()
+            elif choice == "3":
+                self.process_manager()
+            elif choice == "4":
+                self.network_tools()
+            elif choice == "5":
+                self.text_editor()
+            elif choice == "6":
+                self.calculator()
+            elif choice == "7":
+                self.system_settings()
+            elif choice == "8":
+                self.install_gui()
+            elif choice == "9":
+                self.logout()
+            elif choice == "0":
+                self.shutdown()
+            else:
+                print("Invalid option!")
+                
+    def file_manager(self):
+        """Console file manager"""
+        current_path = os.getcwd()
+        
+        while True:
+            print(f"\n=== FILE MANAGER - {current_path} ===")
+            try:
+                items = os.listdir(current_path)
+                for i, item in enumerate(items, 1):
+                    path = os.path.join(current_path, item)
+                    if os.path.isdir(path):
+                        print(f"{i:2d}. [DIR]  {item}")
+                    else:
+                        size = os.path.getsize(path)
+                        print(f"{i:2d}. [FILE] {item} ({size} bytes)")
+            except PermissionError:
+                print("Permission denied!")
+                
+            print("\nCommands: cd <dir>, up, home, quit")
+            cmd = input("Command: ").strip()
+            
+            if cmd == "quit":
+                break
+            elif cmd == "up":
+                current_path = os.path.dirname(current_path)
+            elif cmd == "home":
+                current_path = os.path.expanduser("~")
+            elif cmd.startswith("cd "):
+                new_path = cmd[3:].strip()
+                if new_path.isdigit():
+                    idx = int(new_path) - 1
+                    if 0 <= idx < len(items):
+                        new_path = os.path.join(current_path, items[idx])
+                        if os.path.isdir(new_path):
+                            current_path = new_path
+                        else:
+                            print("Not a directory!")
+                    else:
+                        print("Invalid index!")
+                else:
+                    full_path = os.path.join(current_path, new_path)
+                    if os.path.isdir(full_path):
+                        current_path = full_path
+                    else:
+                        print("Directory not found!")
+                        
+    def system_info(self):
+        """Show system information"""
+        print("\n=== SYSTEM INFORMATION ===")
+        print(f"OS: Berke0S v2.0")
+        print(f"Kernel: {os.uname().sysname} {os.uname().release}")
+        print(f"Architecture: {os.uname().machine}")
+        print(f"Hostname: {socket.gethostname()}")
+        print(f"Uptime: {self.get_uptime()}")
+        
+        # Memory info
+        try:
+            mem = psutil.virtual_memory()
+            print(f"Memory: {mem.used//1024//1024}MB / {mem.total//1024//1024}MB")
+            print(f"Memory Usage: {mem.percent}%")
+        except:
+            print("Memory info not available")
+            
+        # Disk info
+        try:
+            disk = psutil.disk_usage('/')
+            print(f"Disk: {disk.used//1024//1024//1024}GB / {disk.total//1024//1024//1024}GB")
+            print(f"Disk Usage: {disk.percent}%")
+        except:
+            print("Disk info not available")
+            
+        input("\nPress Enter to continue...")
+        
+    def get_uptime(self):
+        """Get system uptime"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                uptime_seconds = float(f.readline().split()[0])
+                uptime_hours = int(uptime_seconds // 3600)
+                uptime_minutes = int((uptime_seconds % 3600) // 60)
+                return f"{uptime_hours}h {uptime_minutes}m"
+        except:
+            return "Unknown"
+            
+    def process_manager(self):
+        """Simple process manager"""
+        print("\n=== PROCESS MANAGER ===")
+        try:
+            processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                try:
+                    processes.append(proc.info)
+                except:
+                    continue
+                    
+            processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
+            
+            print(f"{'PID':>6} {'NAME':<20} {'CPU%':>6} {'MEM%':>6}")
+            print("-" * 40)
+            
+            for proc in processes[:20]:  # Top 20
+                print(f"{proc['pid']:>6} {proc['name']:<20} {proc['cpu_percent']:>6.1f} {proc['memory_percent']:>6.1f}")
+                
+        except Exception as e:
+            print(f"Error: {e}")
+            
+        input("\nPress Enter to continue...")
+        
+    def network_tools(self):
+        """Network tools"""
+        while True:
+            print("\n=== NETWORK TOOLS ===")
+            print("1. Show interfaces")
+            print("2. Ping test")
+            print("3. Port scan")
+            print("4. Back")
+            
+            choice = input("Select: ")
+            
+            if choice == "1":
+                self.show_interfaces()
+            elif choice == "2":
+                self.ping_test()
+            elif choice == "3":
+                self.port_scan()
+            elif choice == "4":
+                break
+                
+    def show_interfaces(self):
+        """Show network interfaces"""
+        try:
+            interfaces = psutil.net_if_addrs()
+            for name, addrs in interfaces.items():
+                print(f"\n{name}:")
+                for addr in addrs:
+                    print(f"  {addr.family.name}: {addr.address}")
+        except Exception as e:
+            print(f"Error: {e}")
+        input("\nPress Enter to continue...")
+        
+    def ping_test(self):
+        """Ping test"""
+        host = input("Enter host to ping: ")
+        try:
+            result = subprocess.run(['ping', '-c', '4', host], 
+                                  capture_output=True, text=True)
+            print(result.stdout)
+        except Exception as e:
+            print(f"Error: {e}")
+        input("\nPress Enter to continue...")
+        
+    def port_scan(self):
+        """Simple port scanner"""
+        host = input("Enter host: ")
+        port = input("Enter port: ")
+        
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(3)
+            result = sock.connect_ex((host, int(port)))
+            if result == 0:
+                print(f"Port {port} is open on {host}")
+            else:
+                print(f"Port {port} is closed on {host}")
+            sock.close()
+        except Exception as e:
+            print(f"Error: {e}")
+        input("\nPress Enter to continue...")
+        
+    def text_editor(self):
+        """Simple text editor"""
+        filename = input("Enter filename (or press Enter for new): ")
+        
+        if filename and os.path.exists(filename):
+            with open(filename, 'r') as f:
+                content = f.read()
+            print(f"\nCurrent content of {filename}:")
+            print("-" * 40)
+            print(content)
+            print("-" * 40)
+        else:
+            content = ""
+            
+        print("\nEnter new content (type 'EOF' on a new line to finish):")
+        lines = []
+        while True:
+            line = input()
+            if line == "EOF":
+                break
+            lines.append(line)
+            
+        new_content = "\n".join(lines)
+        
+        if filename:
+            try:
+                with open(filename, 'w') as f:
+                    f.write(new_content)
+                print(f"File saved: {filename}")
+            except Exception as e:
+                print(f"Error saving file: {e}")
+        else:
+            print("Content not saved (no filename provided)")
+            
+    def calculator(self):
+        """Simple calculator"""
+        print("\n=== CALCULATOR ===")
+        print("Enter expressions (type 'quit' to exit)")
+        print("Supported: +, -, *, /, **, sqrt(), sin(), cos(), tan()")
+        
+        while True:
+            expr = input("calc> ")
+            if expr.lower() == 'quit':
+                break
+                
+            try:
+                # Safe evaluation
+                allowed_names = {
+                    k: v for k, v in math.__dict__.items() if not k.startswith("__")
+                }
+                allowed_names.update({"abs": abs, "round": round})
+                
+                result = eval(expr, {"__builtins__": {}}, allowed_names)
+                print(f"Result: {result}")
+            except Exception as e:
+                print(f"Error: {e}")
+                
+    def system_settings(self):
+        """System settings"""
+        while True:
+            print("\n=== SYSTEM SETTINGS ===")
+            print("1. Change password")
+            print("2. Set timezone")
+            print("3. Configure network")
+            print("4. View logs")
+            print("5. Back")
+            
+            choice = input("Select: ")
+            
+            if choice == "1":
+                self.change_password()
+            elif choice == "2":
+                self.set_timezone()
+            elif choice == "3":
+                self.configure_network()
+            elif choice == "4":
+                self.view_logs()
+            elif choice == "5":
+                break
+                
+    def change_password(self):
+        """Change user password"""
+        current = getpass.getpass("Current password: ")
+        new_pass = getpass.getpass("New password: ")
+        confirm = getpass.getpass("Confirm password: ")
+        
+        if new_pass == confirm:
+            print("Password changed successfully!")
+        else:
+            print("Passwords don't match!")
+            
+    def set_timezone(self):
+        """Set system timezone"""
+        print("Available timezones:")
+        timezones = ["UTC", "Europe/Istanbul", "America/New_York", "Asia/Tokyo"]
+        for i, tz in enumerate(timezones, 1):
+            print(f"{i}. {tz}")
+            
+        choice = input("Select timezone: ")
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(timezones):
+                print(f"Timezone set to {timezones[idx]}")
+            else:
+                print("Invalid selection!")
+        except:
+            print("Invalid input!")
+            
+    def configure_network(self):
+        """Configure network"""
+        print("\n=== NETWORK CONFIGURATION ===")
+        print("1. Configure WiFi")
+        print("2. Configure Ethernet")
+        print("3. View current config")
+        
+        choice = input("Select: ")
+        
+        if choice == "1":
+            ssid = input("WiFi SSID: ")
+            password = getpass.getpass("WiFi Password: ")
+            print(f"Connecting to {ssid}...")
+            # Simulate connection
+            time.sleep(2)
+            print("Connected successfully!")
+        elif choice == "2":
+            print("Configuring Ethernet...")
+            time.sleep(1)
+            print("Ethernet configured!")
+        elif choice == "3":
+            print("Current network configuration:")
+            self.show_interfaces()
+            
+    def view_logs(self):
+        """View system logs"""
+        print("\n=== SYSTEM LOGS ===")
+        log_files = ["/var/log/messages", "/var/log/syslog", "/tmp/berke0s.log"]
+        
+        for log_file in log_files:
+            if os.path.exists(log_file):
+                print(f"\n--- {log_file} ---")
+                try:
+                    with open(log_file, 'r') as f:
+                        lines = f.readlines()
+                        for line in lines[-10:]:  # Last 10 lines
+                            print(line.strip())
+                except:
+                    print("Cannot read log file")
+                    
+        input("\nPress Enter to continue...")
+        
+    def install_gui(self):
+        """Install GUI components"""
+        print("\n=== GUI INSTALLATION ===")
+        print("Installing GUI components...")
+        
+        packages = ["python3-tk", "python3-pil", "xorg", "xinit"]
+        
+        for pkg in packages:
+            print(f"Installing {pkg}...")
+            time.sleep(1)
+            # Simulate installation
+            
+        print("GUI installation completed!")
+        print("Please restart Berke0S to use GUI mode.")
+        input("Press Enter to continue...")
+        
+    def logout(self):
+        """Logout"""
+        print("Logging out...")
+        self.current_user = None
+        self.login()
+        
+    def shutdown(self):
+        """Shutdown system"""
+        confirm = input("Are you sure you want to shutdown? (y/N): ")
+        if confirm.lower() == 'y':
+            print("Shutting down Berke0S...")
+            self.running = False
+            sys.exit(0)
+
+# Configuration and constants
+CONFIG_DIR = os.path.expanduser("~/.berke0s")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+SESSION_FILE = os.path.join(CONFIG_DIR, "session.json")
+LOG_FILE = os.path.join(CONFIG_DIR, "berke0s.log")
+THEMES_DIR = os.path.join(CONFIG_DIR, "themes")
+PLUGINS_DIR = os.path.join(CONFIG_DIR, "plugins")
+WALLPAPERS_DIR = os.path.join(CONFIG_DIR, "wallpapers")
+SOUNDS_DIR = os.path.join(CONFIG_DIR, "sounds")
+DATABASE_FILE = os.path.join(CONFIG_DIR, "berke0s.db")
+
+# Ensure directories exist
+for directory in [CONFIG_DIR, THEMES_DIR, PLUGINS_DIR, WALLPAPERS_DIR, SOUNDS_DIR]:
+    os.makedirs(directory, exist_ok=True)
 
 # Setup logging
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, 
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 # Default configuration
 DEFAULT_CONFIG = {
-    "first_boot": True,
-    "language": "en_US",
-    "timezone": "UTC",
-    "theme": "monochrome",
-    "users": [],
-    "wifi": {"ssid": "", "password": ""},
-    "eula_accepted": False,
-    "desktop": {
-        "wallpaper": "",
-        "icon_size": 48,
-        "grid_snap": True
+    "version": "2.0",
+    "first_run": True,
+    "language": "en",
+    "theme": "berke_dark",
+    "wallpaper": "",
+    "taskbar_position": "bottom",
+    "taskbar_autohide": False,
+    "animations_enabled": True,
+    "transparency_enabled": True,
+    "sound_enabled": True,
+    "notifications_enabled": True,
+    "auto_save": True,
+    "session_timeout": 3600,
+    "screen_saver_timeout": 600,
+    "power_management": True,
+    "window_effects": True,
+    "font_family": "Ubuntu",
+    "font_size": 10,
+    "icon_theme": "berke_icons",
+    "cursor_theme": "berke_cursor",
+    "desktop_effects": True,
+    "virtual_desktops": 4,
+    "hot_corners": True,
+    "dock_enabled": False,
+    "widgets_enabled": True,
+    "search_enabled": True,
+    "recent_files_count": 10,
+    "backup_enabled": True,
+    "security_level": "medium",
+    "network_monitoring": True,
+    "system_monitoring": True,
+    "developer_mode": False,
+    "debug_mode": False
+}
+
+# Language support
+LANGUAGES = {
+    "en": {
+        "welcome": "Welcome to Berke0S",
+        "login": "Login",
+        "username": "Username",
+        "password": "Password",
+        "logout": "Logout",
+        "shutdown": "Shutdown",
+        "restart": "Restart",
+        "settings": "Settings",
+        "applications": "Applications",
+        "file_manager": "File Manager",
+        "text_editor": "Text Editor",
+        "calculator": "Calculator",
+        "system_info": "System Information",
+        "task_manager": "Task Manager",
+        "terminal": "Terminal",
+        "web_browser": "Web Browser",
+        "media_player": "Media Player",
+        "image_viewer": "Image Viewer",
+        "code_editor": "Code Editor",
+        "music_player": "Music Player",
+        "video_player": "Video Player",
+        "email_client": "Email Client",
+        "calendar": "Calendar",
+        "notes": "Notes",
+        "clock": "Clock",
+        "weather": "Weather",
+        "games": "Games",
+        "utilities": "Utilities",
+        "preferences": "Preferences",
+        "about": "About",
+        "help": "Help",
+        "search": "Search",
+        "new": "New",
+        "open": "Open",
+        "save": "Save",
+        "save_as": "Save As",
+        "close": "Close",
+        "exit": "Exit",
+        "cut": "Cut",
+        "copy": "Copy",
+        "paste": "Paste",
+        "delete": "Delete",
+        "select_all": "Select All",
+        "undo": "Undo",
+        "redo": "Redo",
+        "find": "Find",
+        "replace": "Replace",
+        "print": "Print",
+        "properties": "Properties",
+        "ok": "OK",
+        "cancel": "Cancel",
+        "yes": "Yes",
+        "no": "No",
+        "error": "Error",
+        "warning": "Warning",
+        "information": "Information",
+        "question": "Question"
     },
-    "notifications": {
-        "enabled": True,
-        "timeout": 5000
-    },
-    "power": {
-        "sleep_timeout": 600,
-        "screen_off_timeout": 300
-    },
-    "accessibility": {
-        "high_contrast": False,
-        "screen_reader": False,
-        "font_scale": 1.0
+    "tr": {
+        "welcome": "Berke0S'a Hoş Geldiniz",
+        "login": "Giriş",
+        "username": "Kullanıcı Adı",
+        "password": "Şifre",
+        "logout": "Çıkış",
+        "shutdown": "Kapat",
+        "restart": "Yeniden Başlat",
+        "settings": "Ayarlar",
+        "applications": "Uygulamalar",
+        "file_manager": "Dosya Yöneticisi",
+        "text_editor": "Metin Editörü",
+        "calculator": "Hesap Makinesi",
+        "system_info": "Sistem Bilgisi",
+        "task_manager": "Görev Yöneticisi",
+        "terminal": "Terminal",
+        "web_browser": "Web Tarayıcı",
+        "media_player": "Medya Oynatıcı",
+        "image_viewer": "Resim Görüntüleyici",
+        "code_editor": "Kod Editörü",
+        "music_player": "Müzik Çalar",
+        "video_player": "Video Oynatıcı",
+        "email_client": "E-posta İstemcisi",
+        "calendar": "Takvim",
+        "notes": "Notlar",
+        "clock": "Saat",
+        "weather": "Hava Durumu",
+        "games": "Oyunlar",
+        "utilities": "Araçlar",
+        "preferences": "Tercihler",
+        "about": "Hakkında",
+        "help": "Yardım",
+        "search": "Ara",
+        "new": "Yeni",
+        "open": "Aç",
+        "save": "Kaydet",
+        "save_as": "Farklı Kaydet",
+        "close": "Kapat",
+        "exit": "Çık",
+        "cut": "Kes",
+        "copy": "Kopyala",
+        "paste": "Yapıştır",
+        "delete": "Sil",
+        "select_all": "Tümünü Seç",
+        "undo": "Geri Al",
+        "redo": "Yinele",
+        "find": "Bul",
+        "replace": "Değiştir",
+        "print": "Yazdır",
+        "properties": "Özellikler",
+        "ok": "Tamam",
+        "cancel": "İptal",
+        "yes": "Evet",
+        "no": "Hayır",
+        "error": "Hata",
+        "warning": "Uyarı",
+        "information": "Bilgi",
+        "question": "Soru"
     }
 }
 
-# Ensure directories exist
-for d in [CONFIG_DIR, THEME_DIR, PLUGIN_DIR]:
-    os.makedirs(d, exist_ok=True)
+# Theme definitions
+THEMES = {
+    "berke_dark": {
+        "name": "Berke Dark",
+        "bg_primary": "#1a1a1a",
+        "bg_secondary": "#2d2d2d",
+        "bg_tertiary": "#404040",
+        "fg_primary": "#ffffff",
+        "fg_secondary": "#cccccc",
+        "fg_tertiary": "#999999",
+        "accent_primary": "#0078d4",
+        "accent_secondary": "#106ebe",
+        "success": "#107c10",
+        "warning": "#ff8c00",
+        "error": "#d13438",
+        "info": "#0078d4",
+        "border": "#555555",
+        "shadow": "#000000",
+        "gradient_start": "#1a1a1a",
+        "gradient_end": "#2d2d2d",
+        "transparency": 0.95
+    },
+    "berke_light": {
+        "name": "Berke Light",
+        "bg_primary": "#ffffff",
+        "bg_secondary": "#f5f5f5",
+        "bg_tertiary": "#e0e0e0",
+        "fg_primary": "#000000",
+        "fg_secondary": "#333333",
+        "fg_tertiary": "#666666",
+        "accent_primary": "#0078d4",
+        "accent_secondary": "#106ebe",
+        "success": "#107c10",
+        "warning": "#ff8c00",
+        "error": "#d13438",
+        "info": "#0078d4",
+        "border": "#cccccc",
+        "shadow": "#00000020",
+        "gradient_start": "#ffffff",
+        "gradient_end": "#f5f5f5",
+        "transparency": 0.98
+    },
+    "berke_ocean": {
+        "name": "Berke Ocean",
+        "bg_primary": "#0f1419",
+        "bg_secondary": "#1e2328",
+        "bg_tertiary": "#2d3748",
+        "fg_primary": "#e2e8f0",
+        "fg_secondary": "#cbd5e0",
+        "fg_tertiary": "#a0aec0",
+        "accent_primary": "#4299e1",
+        "accent_secondary": "#3182ce",
+        "success": "#38a169",
+        "warning": "#ed8936",
+        "error": "#e53e3e",
+        "info": "#4299e1",
+        "border": "#4a5568",
+        "shadow": "#000000",
+        "gradient_start": "#0f1419",
+        "gradient_end": "#1e2328",
+        "transparency": 0.92
+    }
+}
 
-# Load or create config
-def load_config():
-    try:
-        if not os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(DEFAULT_CONFIG, f, indent=4)
-        with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.error(f"Config load error: {e}")
-        return DEFAULT_CONFIG
-
-# Save config
-def save_config(config):
-    try:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=4)
-    except Exception as e:
-        logging.error(f"Config save error: {e}")
-
-# Load or create session
-def load_session():
-    try:
-        if not os.path.exists(SESSION_FILE):
-            return {"open_windows": [], "desktop_icons": []}
-        with open(SESSION_FILE, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logging.error(f"Session load error: {e}")
-        return {"open_windows": [], "desktop_icons": []}
-
-# Save session
-def save_session(session):
-    try:
-        with open(SESSION_FILE, 'w') as f:
-            json.dump(session, f, indent=4)
-    except Exception as e:
-        logging.error(f"Session save error: {e}")
-
-# Install required packages for TinyCore
-def install_packages():
-    packages = [
-        "python3.9", "tk", "tcl", "python3.9-pip", "alsa", "bluez",
-        "e2fsprogs", "nano", "htop", "bash", "tar", "zip", "wireless-tools",
-        "scrot", "libnotify", "espeak", "mpv"
-    ]
-    for pkg in packages:
-        try:
-            subprocess.run(["tce-load", "-wi", pkg], check=True, capture_output=True)
-            logging.info(f"Installed package: {pkg}")
-        except subprocess.CalledProcessError as e:
-            logging.warning(f"Package install failed: {pkg} - {e.stderr.decode()}")
-    try:
-        subprocess.run(["pip3", "install", "psutil", "Pillow", "flask", "requests"], check=True)
-        logging.info("Installed Python dependencies")
-    except subprocess.CalledProcessError as e:
-        logging.warning(f"Python dependencies install failed: {e.stderr.decode()}")
-
-# Setup autostart
-def setup_autostart():
-    try:
-        bootlocal = "/opt/bootlocal.sh"
-        cmd = f"python3 /usr/local/bin/BERKE0S.py &\n"
-        if not os.path.exists(bootlocal):
-            with open(bootlocal, 'w') as f:
-                f.write(cmd)
-        else:
-            with open(bootlocal, 'r') as f:
-                content = f.read()
-            if cmd not in content:
-                with open(bootlocal, 'a') as f:
-                    f.write(cmd)
-        subprocess.run(["filetool.sh", "-b"], check=True)
-        logging.info("Autostart configured")
-    except Exception as e:
-        logging.error(f"Autostart setup error: {e}")
-
-### --- UI THEME AND ICONS ---
-CSS_STYLE = """
-:root {
-    --bg: rgba(0, 0, 0, 0.4);
-    --fg: #ffffff;
-    --accent: rgba(255, 255, 255, 0.2);
-    --border: #ffffff;
-}
-body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: system-ui, sans-serif;
-    font-size: 12px;
-    margin: 0;
-    backdrop-filter: blur(5px);
-    user-select: none;
-}
-.window {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    transition: all 0.2s ease;
-    position: absolute;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-}
-.titlebar {
-    background: var(--accent);
-    padding: 5px;
-    cursor: move;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.taskbar {
-    position: fixed;
-    bottom: 0;
-    width: 100%;
-    background: rgba(0, 0, 0, 0.6);
-    height: 32px;
-    display: flex;
-    align-items: center;
-    padding: 0 10px;
-    z-index: 1000;
-}
-.taskbar .start {
-    cursor: pointer;
-    padding: 5px;
-}
-.taskbar .clock {
-    font-weight: bold;
-    flex-grow: 1;
-    text-align: center;
-}
-.taskbar .widgets img {
-    width: 20px;
-    height: 20px;
-    margin-left: 8px;
-}
-button {
-    background: var(--accent);
-    border: 1px solid var(--border);
-    color: var(--fg);
-    padding: 5px 10px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    border-radius: 3px;
-}
-button:hover {
-    background: rgba(255, 255, 255, 0.3);
-}
-input, select, textarea {
-    background: rgba(0, 0, 0, 0.6);
-    border: 1px solid var(--border);
-    color: var(--fg);
-    padding: 5px;
-    border-radius: 3px;
-}
-.listbox {
-    background: rgba(0, 0, 0, 0.6);
-    color: var(--fg);
-    border: 1px solid var(--border);
-}
-.context-menu {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    padding: 5px;
-}
-.desktop-icon {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    width: 80px;
-    margin: 10px;
-    cursor: pointer;
-}
-.desktop-icon img {
-    width: 48px;
-    height: 48px;
-}
-.desktop-icon span {
-    color: var(--fg);
-    text-align: center;
-    margin-top: 5px;
-    font-size: 11px;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-}
-"""
-
-BATTERY_ICON = """
-<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <rect x="2" y="7" width="16" height="10" rx="2"/>
-    <path d="M20 10v4"/>
-    <rect x="4" y="9" width="{fill_width}" height="6" fill="#fff"/>
-</svg>
-"""
-WIFI_ICON = """
-<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <path d="M12 20h.01"/>
-    <path d="M2 8.82a15 15 0 0 1 20 0"/>
-    <path d="M5 12.82a10 10 0 0 1 14 0"/>
-    <path d="M8 16.82a5 5 0 0 1 8 0"/>
-</svg>
-"""
-VOLUME_ICON = """
-<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-</svg>
-"""
-BLUETOOTH_ICON = """
-<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <path d="M7 7l10 10-5 5V2l5 5L7 17"/>
-</svg>
-"""
-FILE_ICON = """
-<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-    <polyline points="14 2 14 8 20 8"/>
-</svg>
-"""
-FOLDER_ICON = """
-<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-</svg>
-"""
-CALCULATOR_ICON = """
-<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <rect x="4" y="2" width="16" height="20" rx="2"/>
-    <line x1="8" y1="6" x2="16" y2="6"/>
-    <line x1="8" y1="10" x2="16" y2="10"/>
-    <line x1="8" y1="14" x2="16" y2="14"/>
-    <line x1="8" y1="18" x2="16" y2="18"/>
-</svg>
-"""
-SYSINFO_ICON = """
-<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2">
-    <circle cx="12" cy="12" r="10"/>
-    <line x1="12" y1="16" x2="12" y2="12"/>
-    <line x1="12" y1="8" x2="12" y2="8"/>
-</svg>
-"""
-
-### --- PLUGINS SYSTEM ---
-class PluginManager:
+class DatabaseManager:
+    """Database manager for Berke0S"""
+    
     def __init__(self):
-        self.plugins = {}
-        self.load_plugins()
-
-    def load_plugins(self):
-        for plugin_file in glob.glob(f"{PLUGIN_DIR}/*.py"):
-            try:
-                module_name = os.path.basename(plugin_file).replace('.py', '')
-                spec = __import__('importlib.util').spec_from_file_location(module_name, plugin_file)
-                module = __import__('importlib.util').module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'register_plugin'):
-                    plugin = module.register_plugin()
-                    self.plugins[module_name] = plugin
-                    logging.info(f"Loaded plugin: {module_name}")
-                else:
-                    logging.warning(f"Plugin {module_name} has no register_plugin function")
-            except Exception as e:
-                logging.error(f"Plugin load error: {module_name} - {e}")
-
-    def execute_plugin(self, plugin_name, *args, **kwargs):
-        if plugin_name in self.plugins:
-            try:
-                return self.plugins[plugin_name](*args, **kwargs)
-            except Exception as e:
-                logging.error(f"Plugin execution error: {plugin_name} - {e}")
-
-### --- NOTIFICATION SYSTEM ---
-class NotificationSystem:
-    def __init__(self):
-        self.config = load_config()
-
-    def send(self, title, message, timeout=5000):
-        if not self.config["notifications"]["enabled"]:
-            return
-        try:
-            subprocess.run(["notify-send", "-t", str(timeout), title, message], check=True)
-            logging.info(f"Notification sent: {title} - {message}")
-        except Exception as e:
-            logging.warning(f"Notification error: {e}")
-            # Fallback to logging if notify-send is unavailable
-            logging.info(f"Notification fallback: {title} - {message}")
-
-### --- DESKTOP AND WINDOW MANAGER ---
-class WindowManager:
-    def __init__(self):
-        self.windows = []
-        self.z_index = 100
-        try:
-            self.root = tk.Tk()
-            self.root.attributes('-fullscreen', True)
-            self.root.configure(bg='black')
-        except Exception as e:
-            logging.error(f"Tkinter initialization error: {e}")
-            raise RuntimeError("Failed to initialize Tkinter")
-        self.config = load_config()
-        self.notifications = NotificationSystem()
-        self.plugins = PluginManager()
+        self.db_path = DATABASE_FILE
+        self.init_database()
         
-        # Desktop canvas
-        self.desktop = tk.Canvas(self.root, bg='black', highlightthickness=0)
-        self.desktop.pack(fill=tk.BOTH, expand=True)
-        self.desktop_icons = {}
+    def init_database(self):
+        """Initialize database tables"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Users table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    email TEXT,
+                    full_name TEXT,
+                    avatar_path TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_login TIMESTAMP,
+                    is_admin BOOLEAN DEFAULT 0,
+                    is_active BOOLEAN DEFAULT 1
+                )
+            ''')
+            
+            # Sessions table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    session_token TEXT UNIQUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            ''')
+            
+            # Applications table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS applications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    icon_path TEXT,
+                    executable_path TEXT,
+                    category TEXT,
+                    version TEXT,
+                    installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_system_app BOOLEAN DEFAULT 0,
+                    is_active BOOLEAN DEFAULT 1
+                )
+            ''')
+            
+            # Files table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT NOT NULL,
+                    filepath TEXT UNIQUE NOT NULL,
+                    file_size INTEGER,
+                    file_type TEXT,
+                    mime_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    modified_at TIMESTAMP,
+                    accessed_at TIMESTAMP,
+                    owner_id INTEGER,
+                    permissions TEXT,
+                    is_hidden BOOLEAN DEFAULT 0,
+                    is_system_file BOOLEAN DEFAULT 0,
+                    FOREIGN KEY (owner_id) REFERENCES users (id)
+                )
+            ''')
+            
+            # Settings table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    setting_key TEXT NOT NULL,
+                    setting_value TEXT,
+                    setting_type TEXT DEFAULT 'string',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id),
+                    UNIQUE(user_id, setting_key)
+                )
+            ''')
+            
+            # Logs table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    ip_address TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    log_level TEXT DEFAULT 'INFO',
+                    FOREIGN KEY (user_id) REFERENCES users (id)
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            logging.info("Database initialized successfully")
+            
+        except Exception as e:
+            logging.error(f"Database initialization error: {e}")
+            
+    def create_user(self, username, password, email=None, full_name=None, is_admin=False):
+        """Create a new user"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            
+            cursor.execute('''
+                INSERT INTO users (username, password_hash, email, full_name, is_admin)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (username, password_hash, email, full_name, is_admin))
+            
+            user_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            
+            logging.info(f"User created: {username}")
+            return user_id
+            
+        except sqlite3.IntegrityError:
+            logging.warning(f"User already exists: {username}")
+            return None
+        except Exception as e:
+            logging.error(f"User creation error: {e}")
+            return None
+            
+    def authenticate_user(self, username, password):
+        """Authenticate user"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            
+            cursor.execute('''
+                SELECT id, username, is_admin, is_active
+                FROM users
+                WHERE username = ? AND password_hash = ? AND is_active = 1
+            ''', (username, password_hash))
+            
+            user = cursor.fetchone()
+            
+            if user:
+                # Update last login
+                cursor.execute('''
+                    UPDATE users SET last_login = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (user[0],))
+                conn.commit()
+                
+                logging.info(f"User authenticated: {username}")
+                
+            conn.close()
+            return user
+            
+        except Exception as e:
+            logging.error(f"Authentication error: {e}")
+            return None
+            
+    def log_action(self, user_id, action, details=None, ip_address=None, log_level="INFO"):
+        """Log user action"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO logs (user_id, action, details, ip_address, log_level)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, action, details, ip_address, log_level))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logging.error(f"Logging error: {e}")
+
+class ConfigManager:
+    """Configuration manager for Berke0S"""
+    
+    def __init__(self):
+        self.config_file = CONFIG_FILE
+        self.config = self.load_config()
+        
+    def load_config(self):
+        """Load configuration from file"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                # Merge with defaults
+                for key, value in DEFAULT_CONFIG.items():
+                    if key not in config:
+                        config[key] = value
+                return config
+            else:
+                return DEFAULT_CONFIG.copy()
+        except Exception as e:
+            logging.error(f"Config load error: {e}")
+            return DEFAULT_CONFIG.copy()
+            
+    def save_config(self):
+        """Save configuration to file"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+            logging.info("Configuration saved")
+        except Exception as e:
+            logging.error(f"Config save error: {e}")
+            
+    def get(self, key, default=None):
+        """Get configuration value"""
+        return self.config.get(key, default)
+        
+    def set(self, key, value):
+        """Set configuration value"""
+        self.config[key] = value
+        self.save_config()
+        
+    def get_theme(self):
+        """Get current theme"""
+        theme_name = self.get("theme", "berke_dark")
+        return THEMES.get(theme_name, THEMES["berke_dark"])
+
+class NotificationManager:
+    """Notification system for Berke0S"""
+    
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.notifications = []
+        self.max_notifications = 5
+        
+    def show(self, title, message, notification_type="info", duration=5000):
+        """Show notification"""
+        try:
+            if not GUI_AVAILABLE or not self.parent:
+                print(f"[{notification_type.upper()}] {title}: {message}")
+                return
+                
+            notification = NotificationWindow(self.parent, title, message, notification_type, duration)
+            self.notifications.append(notification)
+            
+            # Remove old notifications
+            if len(self.notifications) > self.max_notifications:
+                old_notification = self.notifications.pop(0)
+                old_notification.destroy()
+                
+            logging.info(f"Notification: {title} - {message}")
+            
+        except Exception as e:
+            logging.error(f"Notification error: {e}")
+            print(f"[{notification_type.upper()}] {title}: {message}")
+
+class NotificationWindow:
+    """Individual notification window"""
+    
+    def __init__(self, parent, title, message, notification_type="info", duration=5000):
+        self.parent = parent
+        self.window = tk.Toplevel(parent)
+        self.window.withdraw()
+        
+        # Configure window
+        self.window.overrideredirect(True)
+        self.window.attributes('-topmost', True)
+        
+        # Get theme colors
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        
+        # Set colors based on type
+        colors = {
+            "info": theme["info"],
+            "success": theme["success"],
+            "warning": theme["warning"],
+            "error": theme["error"]
+        }
+        
+        bg_color = colors.get(notification_type, theme["info"])
+        
+        # Create frame
+        frame = tk.Frame(self.window, bg=bg_color, padx=10, pady=8)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = tk.Label(frame, text=title, font=("Ubuntu", 10, "bold"),
+                              bg=bg_color, fg="white")
+        title_label.pack(anchor="w")
+        
+        # Message
+        message_label = tk.Label(frame, text=message, font=("Ubuntu", 9),
+                                bg=bg_color, fg="white", wraplength=250)
+        message_label.pack(anchor="w")
+        
+        # Position window
+        self.position_window()
+        
+        # Show with animation
+        self.show_animation()
+        
+        # Auto-hide
+        if duration > 0:
+            self.window.after(duration, self.hide_animation)
+            
+        # Click to close
+        for widget in [self.window, frame, title_label, message_label]:
+            widget.bind("<Button-1>", lambda e: self.hide_animation())
+            
+    def position_window(self):
+        """Position notification window"""
+        self.window.update_idletasks()
+        width = self.window.winfo_reqwidth()
+        height = self.window.winfo_reqheight()
+        
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        
+        x = screen_width - width - 20
+        y = 50
+        
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
+        
+    def show_animation(self):
+        """Show notification with animation"""
+        self.window.deiconify()
+        self.window.attributes('-alpha', 0.0)
+        
+        def fade_in(alpha=0.0):
+            if alpha < 1.0:
+                alpha += 0.1
+                self.window.attributes('-alpha', alpha)
+                self.window.after(50, lambda: fade_in(alpha))
+                
+        fade_in()
+        
+    def hide_animation(self):
+        """Hide notification with animation"""
+        def fade_out(alpha=1.0):
+            if alpha > 0.0:
+                alpha -= 0.1
+                self.window.attributes('-alpha', alpha)
+                self.window.after(50, lambda: fade_out(alpha))
+            else:
+                self.destroy()
+                
+        fade_out()
+        
+    def destroy(self):
+        """Destroy notification window"""
+        try:
+            self.window.destroy()
+        except:
+            pass
+
+class SoundManager:
+    """Sound management for Berke0S"""
+    
+    def __init__(self):
+        self.sounds_enabled = True
+        self.volume = 0.7
+        
+    def play_sound(self, sound_name):
+        """Play system sound"""
+        if not self.sounds_enabled:
+            return
+            
+        try:
+            sound_file = os.path.join(SOUNDS_DIR, f"{sound_name}.wav")
+            if os.path.exists(sound_file):
+                # Use aplay or paplay for sound
+                subprocess.run(['aplay', sound_file], 
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except:
+            pass
+            
+    def play_startup_sound(self):
+        """Play startup sound"""
+        self.play_sound("startup")
+        
+    def play_shutdown_sound(self):
+        """Play shutdown sound"""
+        self.play_sound("shutdown")
+        
+    def play_notification_sound(self):
+        """Play notification sound"""
+        self.play_sound("notification")
+        
+    def play_error_sound(self):
+        """Play error sound"""
+        self.play_sound("error")
+
+class LanguageManager:
+    """Language management for Berke0S"""
+    
+    def __init__(self):
+        self.config_manager = ConfigManager()
+        self.current_language = self.config_manager.get("language", "en")
+        
+    def get_text(self, key):
+        """Get localized text"""
+        return LANGUAGES.get(self.current_language, LANGUAGES["en"]).get(key, key)
+        
+    def set_language(self, language):
+        """Set current language"""
+        if language in LANGUAGES:
+            self.current_language = language
+            self.config_manager.set("language", language)
+            
+    def get_available_languages(self):
+        """Get available languages"""
+        return list(LANGUAGES.keys())
+
+class InstallationWizard:
+    """Installation wizard for first-time setup"""
+    
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        self.lang_manager = LanguageManager()
+        self.current_step = 0
+        self.total_steps = 8
+        self.installation_data = {}
+        
+        if GUI_AVAILABLE and parent:
+            self.create_gui()
+        else:
+            self.console_installation()
+            
+    def create_gui(self):
+        """Create GUI installation wizard"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Berke0S Installation Wizard")
+        self.window.geometry("800x600")
+        self.window.resizable(False, False)
+        self.window.grab_set()
+        
+        # Center window
+        self.window.update_idletasks()
+        x = (self.window.winfo_screenwidth() // 2) - (800 // 2)
+        y = (self.window.winfo_screenheight() // 2) - (600 // 2)
+        self.window.geometry(f"800x600+{x}+{y}")
+        
+        # Main frame
+        self.main_frame = tk.Frame(self.window, bg="#1a1a1a")
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Header
+        self.create_header()
+        
+        # Content area
+        self.content_frame = tk.Frame(self.main_frame, bg="#1a1a1a")
+        self.content_frame.pack(fill=tk.BOTH, expand=True, padx=40, pady=20)
+        
+        # Navigation
+        self.create_navigation()
+        
+        # Start with welcome step
+        self.show_step()
+        
+    def create_header(self):
+        """Create installation header"""
+        header_frame = tk.Frame(self.main_frame, bg="#0078d4", height=80)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        # Logo and title
+        title_frame = tk.Frame(header_frame, bg="#0078d4")
+        title_frame.pack(expand=True, fill=tk.BOTH)
+        
+        tk.Label(title_frame, text="BERKE0S", font=("Ubuntu", 24, "bold"),
+                bg="#0078d4", fg="white").pack(pady=10)
+        
+        tk.Label(title_frame, text="Advanced Desktop Operating System",
+                font=("Ubuntu", 12), bg="#0078d4", fg="#cccccc").pack()
+        
+        # Progress bar
+        self.progress_frame = tk.Frame(self.main_frame, bg="#2d2d2d", height=40)
+        self.progress_frame.pack(fill=tk.X)
+        self.progress_frame.pack_propagate(False)
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(self.progress_frame, variable=self.progress_var,
+                                          maximum=self.total_steps, length=700)
+        self.progress_bar.pack(pady=10)
+        
+    def create_navigation(self):
+        """Create navigation buttons"""
+        nav_frame = tk.Frame(self.main_frame, bg="#1a1a1a", height=60)
+        nav_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        nav_frame.pack_propagate(False)
+        
+        button_frame = tk.Frame(nav_frame, bg="#1a1a1a")
+        button_frame.pack(side=tk.RIGHT, padx=20, pady=15)
+        
+        self.back_button = tk.Button(button_frame, text="Back", font=("Ubuntu", 10),
+                                   bg="#404040", fg="white", padx=20, pady=8,
+                                   command=self.previous_step, state=tk.DISABLED)
+        self.back_button.pack(side=tk.LEFT, padx=5)
+        
+        self.next_button = tk.Button(button_frame, text="Next", font=("Ubuntu", 10),
+                                   bg="#0078d4", fg="white", padx=20, pady=8,
+                                   command=self.next_step)
+        self.next_button.pack(side=tk.LEFT, padx=5)
+        
+        self.cancel_button = tk.Button(button_frame, text="Cancel", font=("Ubuntu", 10),
+                                     bg="#d13438", fg="white", padx=20, pady=8,
+                                     command=self.cancel_installation)
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
+        
+    def show_step(self):
+        """Show current installation step"""
+        # Clear content
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+            
+        # Update progress
+        self.progress_var.set(self.current_step)
+        
+        # Show appropriate step
+        steps = [
+            self.step_welcome,
+            self.step_language,
+            self.step_license,
+            self.step_disk_setup,
+            self.step_network,
+            self.step_user_account,
+            self.step_customization,
+            self.step_installation
+        ]
+        
+        if 0 <= self.current_step < len(steps):
+            steps[self.current_step]()
+            
+        # Update navigation
+        self.back_button.config(state=tk.NORMAL if self.current_step > 0 else tk.DISABLED)
+        
+        if self.current_step == len(steps) - 1:
+            self.next_button.config(text="Install", bg="#107c10")
+        elif self.current_step == len(steps):
+            self.next_button.config(text="Finish", bg="#107c10")
+        else:
+            self.next_button.config(text="Next", bg="#0078d4")
+            
+    def step_welcome(self):
+        """Welcome step"""
+        tk.Label(self.content_frame, text="Welcome to Berke0S Installation",
+                font=("Ubuntu", 18, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        welcome_text = """
+Welcome to Berke0S, an advanced desktop operating system designed for modern computing.
+
+Created by: Berke Oruç
+Version: 2.0
+
+Berke0S Features:
+• Modern and intuitive desktop environment
+• Advanced file management system
+• Built-in development tools
+• Comprehensive multimedia support
+• Secure user management
+• Customizable themes and layouts
+• Extensive application suite
+• Network and system monitoring tools
+
+This installation wizard will guide you through the setup process.
+Click Next to continue.
+        """
+        
+        text_widget = tk.Text(self.content_frame, font=("Ubuntu", 11), bg="#2d2d2d",
+                             fg="#cccccc", wrap=tk.WORD, height=15, width=70)
+        text_widget.pack(pady=20)
+        text_widget.insert(tk.END, welcome_text.strip())
+        text_widget.config(state=tk.DISABLED)
+        
+    def step_language(self):
+        """Language selection step"""
+        tk.Label(self.content_frame, text="Select Language / Dil Seçin",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        lang_frame = tk.Frame(self.content_frame, bg="#1a1a1a")
+        lang_frame.pack(pady=40)
+        
+        self.language_var = tk.StringVar(value="en")
+        
+        languages = [
+            ("en", "English"),
+            ("tr", "Türkçe")
+        ]
+        
+        for code, name in languages:
+            rb = tk.Radiobutton(lang_frame, text=name, variable=self.language_var,
+                               value=code, font=("Ubuntu", 12), bg="#1a1a1a",
+                               fg="white", selectcolor="#0078d4", pady=10)
+            rb.pack(anchor=tk.W, pady=5)
+            
+    def step_license(self):
+        """License agreement step"""
+        tk.Label(self.content_frame, text="License Agreement",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        license_text = """
+BERKE0S END USER LICENSE AGREEMENT
+
+Copyright (c) 2024 Berke Oruç
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+By installing Berke0S, you agree to the terms and conditions of this license.
+        """
+        
+        text_widget = tk.Text(self.content_frame, font=("Ubuntu", 10), bg="#2d2d2d",
+                             fg="#cccccc", wrap=tk.WORD, height=12, width=80)
+        text_widget.pack(pady=10)
+        text_widget.insert(tk.END, license_text.strip())
+        text_widget.config(state=tk.DISABLED)
+        
+        self.license_var = tk.BooleanVar()
+        tk.Checkbutton(self.content_frame, text="I accept the license agreement",
+                      variable=self.license_var, font=("Ubuntu", 11),
+                      bg="#1a1a1a", fg="white", selectcolor="#0078d4").pack(pady=20)
+                      
+    def step_disk_setup(self):
+        """Disk setup step"""
+        tk.Label(self.content_frame, text="Disk Setup",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        tk.Label(self.content_frame, text="Select installation location:",
+                font=("Ubuntu", 12), bg="#1a1a1a", fg="#cccccc").pack(pady=10)
+        
+        # Disk selection
+        disk_frame = tk.Frame(self.content_frame, bg="#2d2d2d", relief=tk.RAISED, bd=1)
+        disk_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        self.disk_var = tk.StringVar(value="auto")
+        
+        tk.Radiobutton(disk_frame, text="Automatic partitioning (Recommended)",
+                      variable=self.disk_var, value="auto", font=("Ubuntu", 11),
+                      bg="#2d2d2d", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, pady=5, padx=10)
+        
+        tk.Radiobutton(disk_frame, text="Manual partitioning (Advanced)",
+                      variable=self.disk_var, value="manual", font=("Ubuntu", 11),
+                      bg="#2d2d2d", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, pady=5, padx=10)
+        
+        # Disk space info
+        info_frame = tk.Frame(self.content_frame, bg="#1a1a1a")
+        info_frame.pack(pady=20)
+        
+        try:
+            disk_usage = psutil.disk_usage('/')
+            total_gb = disk_usage.total // (1024**3)
+            free_gb = disk_usage.free // (1024**3)
+            
+            tk.Label(info_frame, text=f"Available disk space: {free_gb} GB / {total_gb} GB",
+                    font=("Ubuntu", 11), bg="#1a1a1a", fg="#cccccc").pack()
+            tk.Label(info_frame, text="Minimum required: 2 GB",
+                    font=("Ubuntu", 10), bg="#1a1a1a", fg="#999999").pack()
+        except:
+            tk.Label(info_frame, text="Disk information not available",
+                    font=("Ubuntu", 11), bg="#1a1a1a", fg="#cccccc").pack()
+                    
+    def step_network(self):
+        """Network configuration step"""
+        tk.Label(self.content_frame, text="Network Configuration",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        # Network type selection
+        net_frame = tk.Frame(self.content_frame, bg="#1a1a1a")
+        net_frame.pack(pady=20)
+        
+        self.network_var = tk.StringVar(value="dhcp")
+        
+        tk.Radiobutton(net_frame, text="Automatic (DHCP) - Recommended",
+                      variable=self.network_var, value="dhcp", font=("Ubuntu", 12),
+                      bg="#1a1a1a", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, pady=5)
+        
+        tk.Radiobutton(net_frame, text="Manual configuration",
+                      variable=self.network_var, value="manual", font=("Ubuntu", 12),
+                      bg="#1a1a1a", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, pady=5)
+        
+        # WiFi configuration
+        wifi_frame = tk.LabelFrame(self.content_frame, text="WiFi Configuration",
+                                  font=("Ubuntu", 12), bg="#2d2d2d", fg="white")
+        wifi_frame.pack(fill=tk.X, pady=20, padx=20)
+        
+        tk.Label(wifi_frame, text="SSID:", font=("Ubuntu", 11),
+                bg="#2d2d2d", fg="white").grid(row=0, column=0, sticky=tk.W, padx=10, pady=5)
+        
+        self.wifi_ssid_var = tk.StringVar()
+        tk.Entry(wifi_frame, textvariable=self.wifi_ssid_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", width=30).grid(row=0, column=1, padx=10, pady=5)
+        
+        tk.Label(wifi_frame, text="Password:", font=("Ubuntu", 11),
+                bg="#2d2d2d", fg="white").grid(row=1, column=0, sticky=tk.W, padx=10, pady=5)
+        
+        self.wifi_password_var = tk.StringVar()
+        tk.Entry(wifi_frame, textvariable=self.wifi_password_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", show="*", width=30).grid(row=1, column=1, padx=10, pady=5)
+        
+    def step_user_account(self):
+        """User account creation step"""
+        tk.Label(self.content_frame, text="Create User Account",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        # User form
+        form_frame = tk.Frame(self.content_frame, bg="#1a1a1a")
+        form_frame.pack(pady=20)
+        
+        # Full name
+        tk.Label(form_frame, text="Full Name:", font=("Ubuntu", 12),
+                bg="#1a1a1a", fg="white").grid(row=0, column=0, sticky=tk.W, padx=10, pady=10)
+        
+        self.fullname_var = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.fullname_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", width=30).grid(row=0, column=1, padx=10, pady=10)
+        
+        # Username
+        tk.Label(form_frame, text="Username:", font=("Ubuntu", 12),
+                bg="#1a1a1a", fg="white").grid(row=1, column=0, sticky=tk.W, padx=10, pady=10)
+        
+        self.username_var = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.username_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", width=30).grid(row=1, column=1, padx=10, pady=10)
+        
+        # Password
+        tk.Label(form_frame, text="Password:", font=("Ubuntu", 12),
+                bg="#1a1a1a", fg="white").grid(row=2, column=0, sticky=tk.W, padx=10, pady=10)
+        
+        self.password_var = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.password_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", show="*", width=30).grid(row=2, column=1, padx=10, pady=10)
+        
+        # Confirm password
+        tk.Label(form_frame, text="Confirm Password:", font=("Ubuntu", 12),
+                bg="#1a1a1a", fg="white").grid(row=3, column=0, sticky=tk.W, padx=10, pady=10)
+        
+        self.confirm_password_var = tk.StringVar()
+        tk.Entry(form_frame, textvariable=self.confirm_password_var, font=("Ubuntu", 11),
+                bg="#404040", fg="white", show="*", width=30).grid(row=3, column=1, padx=10, pady=10)
+        
+        # Admin checkbox
+        self.admin_var = tk.BooleanVar()
+        tk.Checkbutton(form_frame, text="Make this user an administrator",
+                      variable=self.admin_var, font=("Ubuntu", 11),
+                      bg="#1a1a1a", fg="white", selectcolor="#0078d4").grid(row=4, column=0, columnspan=2, pady=10)
+                      
+    def step_customization(self):
+        """Customization step"""
+        tk.Label(self.content_frame, text="Customize Your Desktop",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        # Theme selection
+        theme_frame = tk.LabelFrame(self.content_frame, text="Theme",
+                                   font=("Ubuntu", 12), bg="#2d2d2d", fg="white")
+        theme_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        self.theme_var = tk.StringVar(value="berke_dark")
+        
+        themes = [
+            ("berke_dark", "Berke Dark"),
+            ("berke_light", "Berke Light"),
+            ("berke_ocean", "Berke Ocean")
+        ]
+        
+        for i, (code, name) in enumerate(themes):
+            tk.Radiobutton(theme_frame, text=name, variable=self.theme_var,
+                          value=code, font=("Ubuntu", 11), bg="#2d2d2d",
+                          fg="white", selectcolor="#0078d4").grid(row=0, column=i, padx=20, pady=10)
+        
+        # Taskbar position
+        taskbar_frame = tk.LabelFrame(self.content_frame, text="Taskbar Position",
+                                     font=("Ubuntu", 12), bg="#2d2d2d", fg="white")
+        taskbar_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        self.taskbar_var = tk.StringVar(value="bottom")
+        
+        positions = [
+            ("bottom", "Bottom"),
+            ("top", "Top"),
+            ("left", "Left"),
+            ("right", "Right")
+        ]
+        
+        for i, (code, name) in enumerate(positions):
+            tk.Radiobutton(taskbar_frame, text=name, variable=self.taskbar_var,
+                          value=code, font=("Ubuntu", 11), bg="#2d2d2d",
+                          fg="white", selectcolor="#0078d4").grid(row=0, column=i, padx=15, pady=10)
+        
+        # Additional options
+        options_frame = tk.LabelFrame(self.content_frame, text="Additional Options",
+                                     font=("Ubuntu", 12), bg="#2d2d2d", fg="white")
+        options_frame.pack(fill=tk.X, pady=10, padx=20)
+        
+        self.animations_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(options_frame, text="Enable animations",
+                      variable=self.animations_var, font=("Ubuntu", 11),
+                      bg="#2d2d2d", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, padx=10, pady=5)
+        
+        self.transparency_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(options_frame, text="Enable transparency effects",
+                      variable=self.transparency_var, font=("Ubuntu", 11),
+                      bg="#2d2d2d", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, padx=10, pady=5)
+        
+        self.sounds_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(options_frame, text="Enable system sounds",
+                      variable=self.sounds_var, font=("Ubuntu", 11),
+                      bg="#2d2d2d", fg="white", selectcolor="#0078d4").pack(anchor=tk.W, padx=10, pady=5)
+                      
+    def step_installation(self):
+        """Installation progress step"""
+        tk.Label(self.content_frame, text="Installing Berke0S",
+                font=("Ubuntu", 16, "bold"), bg="#1a1a1a", fg="white").pack(pady=20)
+        
+        # Installation progress
+        self.install_progress_var = tk.DoubleVar()
+        self.install_progress = ttk.Progressbar(self.content_frame, 
+                                              variable=self.install_progress_var,
+                                              maximum=100, length=600)
+        self.install_progress.pack(pady=20)
+        
+        # Status label
+        self.install_status_var = tk.StringVar(value="Preparing installation...")
+        self.install_status_label = tk.Label(self.content_frame, 
+                                           textvariable=self.install_status_var,
+                                           font=("Ubuntu", 11), bg="#1a1a1a", fg="#cccccc")
+        self.install_status_label.pack(pady=10)
+        
+        # Installation log
+        log_frame = tk.Frame(self.content_frame, bg="#1a1a1a")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=20)
+        
+        self.install_log = tk.Text(log_frame, font=("Ubuntu Mono", 9), bg="#000000",
+                                  fg="#00ff00", height=15, width=80)
+        self.install_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(log_frame, command=self.install_log.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.install_log.config(yscrollcommand=scrollbar.set)
+        
+        # Start installation
+        self.start_installation()
+        
+    def start_installation(self):
+        """Start the installation process"""
+        self.next_button.config(state=tk.DISABLED)
+        self.back_button.config(state=tk.DISABLED)
+        
+        # Installation steps
+        steps = [
+            ("Collecting installation data...", 5),
+            ("Creating user account...", 10),
+            ("Setting up database...", 15),
+            ("Configuring system settings...", 25),
+            ("Installing applications...", 40),
+            ("Setting up desktop environment...", 60),
+            ("Configuring network...", 75),
+            ("Applying customizations...", 85),
+            ("Finalizing installation...", 95),
+            ("Installation completed!", 100)
+        ]
+        
+        def run_step(step_index):
+            if step_index < len(steps):
+                status, progress = steps[step_index]
+                self.install_status_var.set(status)
+                self.install_progress_var.set(progress)
+                self.install_log.insert(tk.END, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {status}\n")
+                self.install_log.see(tk.END)
+                
+                # Simulate installation work
+                self.window.after(2000, lambda: run_step(step_index + 1))
+            else:
+                self.installation_completed()
+                
+        run_step(0)
+        
+    def installation_completed(self):
+        """Handle installation completion"""
+        self.install_status_var.set("Installation completed successfully!")
+        self.install_log.insert(tk.END, f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Berke0S installation completed!\n")
+        self.install_log.see(tk.END)
+        
+        # Save configuration
+        self.save_installation_data()
+        
+        # Enable finish button
+        self.next_button.config(state=tk.NORMAL, text="Finish")
+        
+    def save_installation_data(self):
+        """Save installation data"""
+        try:
+            # Update configuration
+            config_updates = {
+                "first_run": False,
+                "language": getattr(self, 'language_var', tk.StringVar()).get(),
+                "theme": getattr(self, 'theme_var', tk.StringVar()).get(),
+                "taskbar_position": getattr(self, 'taskbar_var', tk.StringVar()).get(),
+                "animations_enabled": getattr(self, 'animations_var', tk.BooleanVar()).get(),
+                "transparency_enabled": getattr(self, 'transparency_var', tk.BooleanVar()).get(),
+                "sound_enabled": getattr(self, 'sounds_var', tk.BooleanVar()).get()
+            }
+            
+            for key, value in config_updates.items():
+                self.config_manager.set(key, value)
+                
+            # Create user account
+            username = getattr(self, 'username_var', tk.StringVar()).get()
+            password = getattr(self, 'password_var', tk.StringVar()).get()
+            fullname = getattr(self, 'fullname_var', tk.StringVar()).get()
+            is_admin = getattr(self, 'admin_var', tk.BooleanVar()).get()
+            
+            if username and password:
+                self.db_manager.create_user(username, password, None, fullname, is_admin)
+                
+            logging.info("Installation data saved successfully")
+            
+        except Exception as e:
+            logging.error(f"Error saving installation data: {e}")
+            
+    def next_step(self):
+        """Go to next step"""
+        if self.current_step == 2:  # License step
+            if not getattr(self, 'license_var', tk.BooleanVar()).get():
+                messagebox.showerror("Error", "You must accept the license agreement to continue.")
+                return
+                
+        if self.current_step == 5:  # User account step
+            username = getattr(self, 'username_var', tk.StringVar()).get()
+            password = getattr(self, 'password_var', tk.StringVar()).get()
+            confirm = getattr(self, 'confirm_password_var', tk.StringVar()).get()
+            
+            if not username or not password:
+                messagebox.showerror("Error", "Username and password are required.")
+                return
+                
+            if password != confirm:
+                messagebox.showerror("Error", "Passwords do not match.")
+                return
+                
+        if self.current_step < self.total_steps:
+            self.current_step += 1
+            self.show_step()
+        else:
+            # Finish installation
+            self.window.destroy()
+            
+    def previous_step(self):
+        """Go to previous step"""
+        if self.current_step > 0:
+            self.current_step -= 1
+            self.show_step()
+            
+    def cancel_installation(self):
+        """Cancel installation"""
+        if messagebox.askyesno("Cancel Installation", 
+                              "Are you sure you want to cancel the installation?"):
+            self.window.destroy()
+            
+    def console_installation(self):
+        """Console-based installation"""
+        print("\n" + "="*60)
+        print("BERKE0S INSTALLATION WIZARD")
+        print("Created by: Berke Oruç")
+        print("="*60)
+        
+        # Language selection
+        print("\nSelect Language:")
+        print("1. English")
+        print("2. Türkçe")
+        
+        lang_choice = input("Choice (1-2): ")
+        language = "tr" if lang_choice == "2" else "en"
+        
+        # License agreement
+        print("\nLicense Agreement:")
+        print("Do you accept the Berke0S license agreement? (y/n): ", end="")
+        if input().lower() != 'y':
+            print("Installation cancelled.")
+            return
+            
+        # User account
+        print("\nCreate User Account:")
+        username = input("Username: ")
+        password = getpass.getpass("Password: ")
+        fullname = input("Full Name (optional): ")
+        
+        # Theme selection
+        print("\nSelect Theme:")
+        print("1. Berke Dark")
+        print("2. Berke Light")
+        print("3. Berke Ocean")
+        
+        theme_choice = input("Choice (1-3): ")
+        themes = ["berke_dark", "berke_light", "berke_ocean"]
+        theme = themes[int(theme_choice) - 1] if theme_choice.isdigit() and 1 <= int(theme_choice) <= 3 else "berke_dark"
+        
+        # Installation
+        print("\nInstalling Berke0S...")
+        
+        # Save configuration
+        config_manager = ConfigManager()
+        config_manager.set("first_run", False)
+        config_manager.set("language", language)
+        config_manager.set("theme", theme)
+        
+        # Create user
+        db_manager = DatabaseManager()
+        db_manager.create_user(username, password, None, fullname, True)
+        
+        print("Installation completed successfully!")
+        print("You can now start Berke0S.")
+
+class LoginManager:
+    """Login and session management"""
+    
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.db_manager = DatabaseManager()
+        self.config_manager = ConfigManager()
+        self.lang_manager = LanguageManager()
+        self.current_user = None
+        self.session_token = None
+        
+        if GUI_AVAILABLE and parent:
+            self.create_gui()
+        else:
+            self.console_login()
+            
+    def create_gui(self):
+        """Create GUI login window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Berke0S Login")
+        self.window.geometry("400x500")
+        self.window.resizable(False, False)
+        self.window.grab_set()
+        
+        # Center window
+        self.window.update_idletasks()
+        x = (self.window.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.window.winfo_screenheight() // 2) - (500 // 2)
+        self.window.geometry(f"400x500+{x}+{y}")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        
+        # Configure window
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Main frame
+        main_frame = tk.Frame(self.window, bg=theme["bg_primary"])
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=40, pady=40)
+        
+        # Logo/Title
+        tk.Label(main_frame, text="BERKE0S", font=("Ubuntu", 24, "bold"),
+                bg=theme["bg_primary"], fg=theme["accent_primary"]).pack(pady=20)
+        
+        tk.Label(main_frame, text="Advanced Desktop OS", font=("Ubuntu", 12),
+                bg=theme["bg_primary"], fg=theme["fg_secondary"]).pack(pady=(0, 30))
+        
+        # Login form
+        form_frame = tk.Frame(main_frame, bg=theme["bg_secondary"], relief=tk.RAISED, bd=1)
+        form_frame.pack(fill=tk.X, pady=20)
+        
+        # Username
+        tk.Label(form_frame, text="Username:", font=("Ubuntu", 12),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=(20, 5))
+        
+        self.username_var = tk.StringVar()
+        username_entry = tk.Entry(form_frame, textvariable=self.username_var,
+                                 font=("Ubuntu", 12), bg=theme["bg_tertiary"],
+                                 fg=theme["fg_primary"], relief=tk.FLAT, bd=5)
+        username_entry.pack(pady=(0, 15), padx=20, fill=tk.X)
+        username_entry.focus()
+        
+        # Password
+        tk.Label(form_frame, text="Password:", font=("Ubuntu", 12),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=(0, 5))
+        
+        self.password_var = tk.StringVar()
+        password_entry = tk.Entry(form_frame, textvariable=self.password_var,
+                                 font=("Ubuntu", 12), bg=theme["bg_tertiary"],
+                                 fg=theme["fg_primary"], show="*", relief=tk.FLAT, bd=5)
+        password_entry.pack(pady=(0, 20), padx=20, fill=tk.X)
+        
+        # Login button
+        login_btn = tk.Button(form_frame, text="Login", font=("Ubuntu", 12, "bold"),
+                             bg=theme["accent_primary"], fg="white", relief=tk.FLAT,
+                             padx=20, pady=10, command=self.attempt_login)
+        login_btn.pack(pady=(0, 20))
+        
+        # Bind Enter key
+        self.window.bind('<Return>', lambda e: self.attempt_login())
+        
+        # Status label
+        self.status_var = tk.StringVar()
+        self.status_label = tk.Label(main_frame, textvariable=self.status_var,
+                                    font=("Ubuntu", 10), bg=theme["bg_primary"],
+                                    fg=theme["error"])
+        self.status_label.pack(pady=10)
+        
+        # Footer
+        tk.Label(main_frame, text="Created by Berke Oruç", font=("Ubuntu", 9),
+                bg=theme["bg_primary"], fg=theme["fg_tertiary"]).pack(side=tk.BOTTOM, pady=10)
+                
+    def attempt_login(self):
+        """Attempt to login"""
+        username = self.username_var.get()
+        password = self.password_var.get()
+        
+        if not username or not password:
+            self.status_var.set("Please enter username and password")
+            return
+            
+        user = self.db_manager.authenticate_user(username, password)
+        
+        if user:
+            self.current_user = user
+            self.session_token = str(uuid.uuid4())
+            
+            # Log successful login
+            self.db_manager.log_action(user[0], "LOGIN", f"Successful login from GUI")
+            
+            self.status_var.set("Login successful!")
+            self.window.after(1000, self.window.destroy)
+            
+            return True
+        else:
+            self.status_var.set("Invalid username or password")
+            self.password_var.set("")
+            
+            # Log failed login attempt
+            self.db_manager.log_action(None, "LOGIN_FAILED", f"Failed login attempt: {username}")
+            
+            return False
+            
+    def console_login(self):
+        """Console login"""
+        print("\n=== BERKE0S LOGIN ===")
+        
+        max_attempts = 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            username = input("Username: ")
+            password = getpass.getpass("Password: ")
+            
+            user = self.db_manager.authenticate_user(username, password)
+            
+            if user:
+                self.current_user = user
+                self.session_token = str(uuid.uuid4())
+                
+                # Log successful login
+                self.db_manager.log_action(user[0], "LOGIN", f"Successful login from console")
+                
+                print(f"Welcome, {user[1]}!")
+                return True
+            else:
+                attempts += 1
+                remaining = max_attempts - attempts
+                
+                if remaining > 0:
+                    print(f"Invalid credentials. {remaining} attempts remaining.")
+                else:
+                    print("Too many failed attempts. Access denied.")
+                    
+                # Log failed login attempt
+                self.db_manager.log_action(None, "LOGIN_FAILED", f"Failed login attempt: {username}")
+                
+        return False
+        
+    def logout(self):
+        """Logout current user"""
+        if self.current_user:
+            self.db_manager.log_action(self.current_user[0], "LOGOUT", "User logged out")
+            
+        self.current_user = None
+        self.session_token = None
+        
+    def is_logged_in(self):
+        """Check if user is logged in"""
+        return self.current_user is not None
+        
+    def get_current_user(self):
+        """Get current user info"""
+        return self.current_user
+
+class FileManager:
+    """Advanced file manager with modern features"""
+    
+    def __init__(self, parent, user_info=None):
+        self.parent = parent
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        self.lang_manager = LanguageManager()
+        self.current_path = os.path.expanduser("~")
+        self.history = [self.current_path]
+        self.history_index = 0
+        self.bookmarks = []
+        self.clipboard = []
+        self.clipboard_operation = None  # 'cut' or 'copy'
+        
+        self.create_window()
+        
+    def create_window(self):
+        """Create file manager window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("File Manager - Berke0S")
+        self.window.geometry("900x600")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create toolbar
+        self.create_toolbar()
+        
+        # Create main layout
+        self.create_main_layout()
+        
+        # Create status bar
+        self.create_status_bar()
+        
+        # Load initial directory
+        self.refresh_view()
+        
+    def create_menu_bar(self):
+        """Create menu bar"""
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="New Folder", command=self.new_folder)
+        file_menu.add_command(label="New File", command=self.new_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="Properties", command=self.show_properties)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.window.destroy)
+        
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Cut", command=self.cut_files)
+        edit_menu.add_command(label="Copy", command=self.copy_files)
+        edit_menu.add_command(label="Paste", command=self.paste_files)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Select All", command=self.select_all)
+        edit_menu.add_command(label="Invert Selection", command=self.invert_selection)
+        
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Refresh", command=self.refresh_view)
+        view_menu.add_command(label="Show Hidden Files", command=self.toggle_hidden_files)
+        
+        # Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+        tools_menu.add_command(label="Search", command=self.open_search)
+        tools_menu.add_command(label="Terminal Here", command=self.open_terminal_here)
+        
+    def create_toolbar(self):
+        """Create toolbar"""
+        theme = self.config_manager.get_theme()
+        
+        toolbar = tk.Frame(self.window, bg=theme["bg_secondary"], height=40)
+        toolbar.pack(fill=tk.X)
+        toolbar.pack_propagate(False)
+        
+        # Navigation buttons
+        nav_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        nav_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        self.back_btn = tk.Button(nav_frame, text="◀", font=("Ubuntu", 12),
+                                 bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                                 command=self.go_back, width=3)
+        self.back_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.forward_btn = tk.Button(nav_frame, text="▶", font=("Ubuntu", 12),
+                                    bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                                    command=self.go_forward, width=3)
+        self.forward_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.up_btn = tk.Button(nav_frame, text="▲", font=("Ubuntu", 12),
+                               bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                               command=self.go_up, width=3)
+        self.up_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.home_btn = tk.Button(nav_frame, text="🏠", font=("Ubuntu", 12),
+                                 bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                                 command=self.go_home, width=3)
+        self.home_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Address bar
+        address_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        address_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=5)
+        
+        self.address_var = tk.StringVar(value=self.current_path)
+        self.address_entry = tk.Entry(address_frame, textvariable=self.address_var,
+                                     font=("Ubuntu", 10), bg=theme["bg_tertiary"],
+                                     fg=theme["fg_primary"])
+        self.address_entry.pack(fill=tk.X)
+        self.address_entry.bind('<Return>', self.navigate_to_address)
+        
+        # Action buttons
+        action_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        action_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        tk.Button(action_frame, text="New", font=("Ubuntu", 10),
+                 bg=theme["accent_primary"], fg="white",
+                 command=self.new_folder).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(action_frame, text="Search", font=("Ubuntu", 10),
+                 bg=theme["accent_primary"], fg="white",
+                 command=self.open_search).pack(side=tk.LEFT, padx=2)
+        
+    def create_main_layout(self):
+        """Create main layout with sidebar and file view"""
+        theme = self.config_manager.get_theme()
+        
+        # Main paned window
+        self.paned_window = tk.PanedWindow(self.window, orient=tk.HORIZONTAL,
+                                          bg=theme["bg_primary"], sashwidth=5)
+        self.paned_window.pack(fill=tk.BOTH, expand=True)
+        
+        # Sidebar
+        self.create_sidebar()
+        
+        # File view
+        self.create_file_view()
+        
+    def create_sidebar(self):
+        """Create sidebar with bookmarks and shortcuts"""
+        theme = self.config_manager.get_theme()
+        
+        sidebar_frame = tk.Frame(self.paned_window, bg=theme["bg_secondary"], width=200)
+        self.paned_window.add(sidebar_frame, minsize=150)
+        
+        # Bookmarks section
+        tk.Label(sidebar_frame, text="Bookmarks", font=("Ubuntu", 12, "bold"),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=10)
+        
+        self.bookmarks_listbox = tk.Listbox(sidebar_frame, bg=theme["bg_tertiary"],
+                                           fg=theme["fg_primary"], font=("Ubuntu", 10),
+                                           selectbackground=theme["accent_primary"])
+        self.bookmarks_listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.bookmarks_listbox.bind('<Double-1>', self.navigate_to_bookmark)
+        
+        # Add default bookmarks
+        default_bookmarks = [
+            ("Home", os.path.expanduser("~")),
+            ("Documents", os.path.expanduser("~/Documents")),
+            ("Downloads", os.path.expanduser("~/Downloads")),
+            ("Desktop", os.path.expanduser("~/Desktop")),
+            ("Root", "/")
+        ]
+        
+        for name, path in default_bookmarks:
+            self.bookmarks.append((name, path))
+            self.bookmarks_listbox.insert(tk.END, name)
+            
+        # Bookmark buttons
+        bookmark_btn_frame = tk.Frame(sidebar_frame, bg=theme["bg_secondary"])
+        bookmark_btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Button(bookmark_btn_frame, text="Add", font=("Ubuntu", 9),
+                 bg=theme["accent_primary"], fg="white",
+                 command=self.add_bookmark).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(bookmark_btn_frame, text="Remove", font=("Ubuntu", 9),
+                 bg=theme["error"], fg="white",
+                 command=self.remove_bookmark).pack(side=tk.LEFT, padx=2)
+        
+    def create_file_view(self):
+        """Create file view area"""
+        theme = self.config_manager.get_theme()
+        
+        file_frame = tk.Frame(self.paned_window, bg=theme["bg_primary"])
+        self.paned_window.add(file_frame, minsize=400)
+        
+        # File list with scrollbars
+        list_frame = tk.Frame(file_frame, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create treeview for file list
+        columns = ('Name', 'Size', 'Type', 'Modified')
+        self.file_tree = ttk.Treeview(list_frame, columns=columns, show='tree headings')
+        
+        # Configure columns
+        self.file_tree.heading('#0', text='Icon')
+        self.file_tree.column('#0', width=50, minwidth=50)
+        
+        for col in columns:
+            self.file_tree.heading(col, text=col)
+            if col == 'Name':
+                self.file_tree.column(col, width=300, minwidth=200)
+            elif col == 'Size':
+                self.file_tree.column(col, width=100, minwidth=80)
+            elif col == 'Type':
+                self.file_tree.column(col, width=120, minwidth=100)
+            elif col == 'Modified':
+                self.file_tree.column(col, width=150, minwidth=120)
+                
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.file_tree.yview)
+        h_scrollbar = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.file_tree.xview)
+        
+        self.file_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack widgets
+        self.file_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Bind events
+        self.file_tree.bind('<Double-1>', self.on_double_click)
+        self.file_tree.bind('<Button-3>', self.show_context_menu)
+        self.file_tree.bind('<KeyPress>', self.on_key_press)
+        
+    def create_status_bar(self):
+        """Create status bar"""
+        theme = self.config_manager.get_theme()
+        
+        self.status_bar = tk.Frame(self.window, bg=theme["bg_secondary"], height=25)
+        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        self.status_bar.pack_propagate(False)
+        
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_label = tk.Label(self.status_bar, textvariable=self.status_var,
+                                    font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                    fg=theme["fg_secondary"])
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=2)
+        
+        # File count and size info
+        self.info_var = tk.StringVar()
+        self.info_label = tk.Label(self.status_bar, textvariable=self.info_var,
+                                  font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                  fg=theme["fg_secondary"])
+        self.info_label.pack(side=tk.RIGHT, padx=10, pady=2)
+        
+    def refresh_view(self):
+        """Refresh file view"""
+        try:
+            # Clear current items
+            for item in self.file_tree.get_children():
+                self.file_tree.delete(item)
+                
+            # Update address bar
+            self.address_var.set(self.current_path)
+            
+            # Get directory contents
+            try:
+                items = os.listdir(self.current_path)
+                items.sort(key=lambda x: (not os.path.isdir(os.path.join(self.current_path, x)), x.lower()))
+            except PermissionError:
+                self.status_var.set("Permission denied")
+                return
+            except FileNotFoundError:
+                self.status_var.set("Directory not found")
+                return
+                
+            file_count = 0
+            dir_count = 0
+            total_size = 0
+            
+            for item in items:
+                if item.startswith('.') and not self.config_manager.get("show_hidden_files", False):
+                    continue
+                    
+                item_path = os.path.join(self.current_path, item)
+                
+                try:
+                    stat_info = os.stat(item_path)
+                    
+                    # Get file info
+                    if os.path.isdir(item_path):
+                        icon = "📁"
+                        file_type = "Folder"
+                        size = ""
+                        dir_count += 1
+                    else:
+                        icon = self.get_file_icon(item)
+                        file_type = self.get_file_type(item)
+                        size = self.format_size(stat_info.st_size)
+                        total_size += stat_info.st_size
+                        file_count += 1
+                        
+                    modified = datetime.datetime.fromtimestamp(stat_info.st_mtime).strftime("%Y-%m-%d %H:%M")
+                    
+                    # Insert into treeview
+                    self.file_tree.insert('', tk.END, text=icon,
+                                         values=(item, size, file_type, modified))
+                                         
+                except (OSError, PermissionError):
+                    # Skip files we can't access
+                    continue
+                    
+            # Update status
+            self.status_var.set(f"Path: {self.current_path}")
+            self.info_var.set(f"{dir_count} folders, {file_count} files ({self.format_size(total_size)})")
+            
+            # Update navigation buttons
+            self.update_navigation_buttons()
+            
+        except Exception as e:
+            self.status_var.set(f"Error: {str(e)}")
+            logging.error(f"File manager refresh error: {e}")
+            
+    def get_file_icon(self, filename):
+        """Get file icon based on extension"""
+        ext = os.path.splitext(filename)[1].lower()
+        
+        icon_map = {
+            '.txt': '📄', '.doc': '📄', '.docx': '📄', '.pdf': '📄',
+            '.py': '🐍', '.js': '📜', '.html': '🌐', '.css': '🎨',
+            '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️',
+            '.mp3': '🎵', '.wav': '🎵', '.mp4': '🎬', '.avi': '🎬',
+            '.zip': '📦', '.tar': '📦', '.gz': '📦', '.rar': '📦',
+            '.exe': '⚙️', '.deb': '📦', '.rpm': '📦'
+        }
+        
+        return icon_map.get(ext, '📄')
+        
+    def get_file_type(self, filename):
+        """Get file type description"""
+        ext = os.path.splitext(filename)[1].lower()
+        
+        type_map = {
+            '.txt': 'Text File',
+            '.py': 'Python Script',
+            '.js': 'JavaScript File',
+            '.html': 'HTML Document',
+            '.css': 'CSS Stylesheet',
+            '.jpg': 'JPEG Image',
+            '.jpeg': 'JPEG Image',
+            '.png': 'PNG Image',
+            '.gif': 'GIF Image',
+            '.mp3': 'MP3 Audio',
+            '.wav': 'WAV Audio',
+            '.mp4': 'MP4 Video',
+            '.avi': 'AVI Video',
+            '.zip': 'ZIP Archive',
+            '.tar': 'TAR Archive',
+            '.gz': 'GZIP Archive'
+        }
+        
+        return type_map.get(ext, 'File')
+        
+    def format_size(self, size):
+        """Format file size"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+        
+    def update_navigation_buttons(self):
+        """Update navigation button states"""
+        self.back_btn.config(state=tk.NORMAL if self.history_index > 0 else tk.DISABLED)
+        self.forward_btn.config(state=tk.NORMAL if self.history_index < len(self.history) - 1 else tk.DISABLED)
+        self.up_btn.config(state=tk.NORMAL if self.current_path != "/" else tk.DISABLED)
+        
+    def navigate_to(self, path):
+        """Navigate to specified path"""
+        if os.path.isdir(path):
+            self.current_path = os.path.abspath(path)
+            
+            # Update history
+            if self.history_index < len(self.history) - 1:
+                self.history = self.history[:self.history_index + 1]
+            self.history.append(self.current_path)
+            self.history_index = len(self.history) - 1
+            
+            self.refresh_view()
+            
+            # Log navigation
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "NAVIGATE", f"Navigated to {path}")
+        else:
+            self.status_var.set("Invalid path")
+            
+    def navigate_to_address(self, event=None):
+        """Navigate to address bar path"""
+        path = self.address_var.get()
+        self.navigate_to(path)
+        
+    def navigate_to_bookmark(self, event=None):
+        """Navigate to selected bookmark"""
+        selection = self.bookmarks_listbox.curselection()
+        if selection:
+            index = selection[0]
+            if index < len(self.bookmarks):
+                name, path = self.bookmarks[index]
+                self.navigate_to(path)
+                
+    def go_back(self):
+        """Go back in history"""
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.current_path = self.history[self.history_index]
+            self.refresh_view()
+            
+    def go_forward(self):
+        """Go forward in history"""
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.current_path = self.history[self.history_index]
+            self.refresh_view()
+            
+    def go_up(self):
+        """Go to parent directory"""
+        parent = os.path.dirname(self.current_path)
+        if parent != self.current_path:
+            self.navigate_to(parent)
+            
+    def go_home(self):
+        """Go to home directory"""
+        self.navigate_to(os.path.expanduser("~"))
+        
+    def on_double_click(self, event=None):
+        """Handle double-click on file/folder"""
+        selection = self.file_tree.selection()
+        if selection:
+            item = self.file_tree.item(selection[0])
+            filename = item['values'][0]
+            file_path = os.path.join(self.current_path, filename)
+            
+            if os.path.isdir(file_path):
+                self.navigate_to(file_path)
+            else:
+                self.open_file(file_path)
+                
+    def open_file(self, file_path):
+        """Open file with appropriate application"""
+        try:
+            # Log file access
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "OPEN_FILE", f"Opened {file_path}")
+                
+            # Get file extension
+            ext = os.path.splitext(file_path)[1].lower()
+            
+            # Open with appropriate application
+            if ext in ['.txt', '.py', '.js', '.html', '.css', '.md']:
+                TextEditor(self.parent, file_path, self.user_info)
+            elif ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+                ImageViewer(self.parent, file_path, self.user_info)
+            elif ext in ['.mp3', '.wav', '.ogg']:
+                MusicPlayer(self.parent, file_path, self.user_info)
+            elif ext in ['.mp4', '.avi', '.mkv', '.mov']:
+                VideoPlayer(self.parent, file_path, self.user_info)
+            else:
+                # Try to open with system default
+                subprocess.run(['xdg-open', file_path], check=True)
+                
+        except Exception as e:
+            self.status_var.set(f"Cannot open file: {str(e)}")
+            logging.error(f"File open error: {e}")
+            
+    def show_context_menu(self, event):
+        """Show context menu"""
+        theme = self.config_manager.get_theme()
+        
+        # Create context menu
+        context_menu = tk.Menu(self.window, tearoff=0,
+                              bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        
+        selection = self.file_tree.selection()
+        
+        if selection:
+            # File/folder selected
+            item = self.file_tree.item(selection[0])
+            filename = item['values'][0]
+            file_path = os.path.join(self.current_path, filename)
+            
+            if os.path.isdir(file_path):
+                context_menu.add_command(label="Open", command=lambda: self.navigate_to(file_path))
+                context_menu.add_command(label="Open in New Window", command=lambda: self.open_in_new_window(file_path))
+            else:
+                context_menu.add_command(label="Open", command=lambda: self.open_file(file_path))
+                context_menu.add_command(label="Open With...", command=lambda: self.open_with_dialog(file_path))
+                
+            context_menu.add_separator()
+            context_menu.add_command(label="Cut", command=self.cut_files)
+            context_menu.add_command(label="Copy", command=self.copy_files)
+            context_menu.add_separator()
+            context_menu.add_command(label="Rename", command=self.rename_file)
+            context_menu.add_command(label="Delete", command=self.delete_files)
+            context_menu.add_separator()
+            context_menu.add_command(label="Properties", command=self.show_properties)
+        else:
+            # Empty space
+            context_menu.add_command(label="New Folder", command=self.new_folder)
+            context_menu.add_command(label="New File", command=self.new_file)
+            context_menu.add_separator()
+            
+            if self.clipboard:
+                context_menu.add_command(label="Paste", command=self.paste_files)
+                context_menu.add_separator()
+                
+            context_menu.add_command(label="Refresh", command=self.refresh_view)
+            context_menu.add_command(label="Properties", command=self.show_folder_properties)
+            
+        # Show menu
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            context_menu.grab_release()
+            
+    def on_key_press(self, event):
+        """Handle key press events"""
+        if event.keysym == 'Delete':
+            self.delete_files()
+        elif event.keysym == 'F2':
+            self.rename_file()
+        elif event.keysym == 'F5':
+            self.refresh_view()
+        elif event.state & 0x4:  # Ctrl key
+            if event.keysym == 'c':
+                self.copy_files()
+            elif event.keysym == 'x':
+                self.cut_files()
+            elif event.keysym == 'v':
+                self.paste_files()
+            elif event.keysym == 'a':
+                self.select_all()
+                
+    def new_folder(self):
+        """Create new folder"""
+        name = simpledialog.askstring("New Folder", "Enter folder name:")
+        if name:
+            folder_path = os.path.join(self.current_path, name)
+            try:
+                os.makedirs(folder_path, exist_ok=True)
+                self.refresh_view()
+                self.status_var.set(f"Created folder: {name}")
+                
+                # Log action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "CREATE_FOLDER", f"Created {folder_path}")
+                    
+            except Exception as e:
+                self.status_var.set(f"Cannot create folder: {str(e)}")
+                
+    def new_file(self):
+        """Create new file"""
+        name = simpledialog.askstring("New File", "Enter file name:")
+        if name:
+            file_path = os.path.join(self.current_path, name)
+            try:
+                with open(file_path, 'w') as f:
+                    f.write("")
+                self.refresh_view()
+                self.status_var.set(f"Created file: {name}")
+                
+                # Log action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "CREATE_FILE", f"Created {file_path}")
+                    
+            except Exception as e:
+                self.status_var.set(f"Cannot create file: {str(e)}")
+                
+    def cut_files(self):
+        """Cut selected files"""
+        selection = self.file_tree.selection()
+        if selection:
+            self.clipboard = []
+            for item_id in selection:
+                item = self.file_tree.item(item_id)
+                filename = item['values'][0]
+                file_path = os.path.join(self.current_path, filename)
+                self.clipboard.append(file_path)
+            self.clipboard_operation = 'cut'
+            self.status_var.set(f"Cut {len(self.clipboard)} items")
+            
+    def copy_files(self):
+        """Copy selected files"""
+        selection = self.file_tree.selection()
+        if selection:
+            self.clipboard = []
+            for item_id in selection:
+                item = self.file_tree.item(item_id)
+                filename = item['values'][0]
+                file_path = os.path.join(self.current_path, filename)
+                self.clipboard.append(file_path)
+            self.clipboard_operation = 'copy'
+            self.status_var.set(f"Copied {len(self.clipboard)} items")
+            
+    def paste_files(self):
+        """Paste files from clipboard"""
+        if not self.clipboard:
+            return
+            
+        try:
+            for source_path in self.clipboard:
+                filename = os.path.basename(source_path)
+                dest_path = os.path.join(self.current_path, filename)
+                
+                # Handle name conflicts
+                if os.path.exists(dest_path):
+                    base, ext = os.path.splitext(filename)
+                    counter = 1
+                    while os.path.exists(dest_path):
+                        new_name = f"{base}_copy{counter}{ext}"
+                        dest_path = os.path.join(self.current_path, new_name)
+                        counter += 1
+                        
+                if self.clipboard_operation == 'copy':
+                    if os.path.isdir(source_path):
+                        shutil.copytree(source_path, dest_path)
+                    else:
+                        shutil.copy2(source_path, dest_path)
+                elif self.clipboard_operation == 'cut':
+                    shutil.move(source_path, dest_path)
+                    
+            if self.clipboard_operation == 'cut':
+                self.clipboard = []
+                
+            self.refresh_view()
+            self.status_var.set(f"Pasted {len(self.clipboard)} items")
+            
+            # Log action
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "PASTE_FILES", 
+                                         f"Pasted files to {self.current_path}")
+                
+        except Exception as e:
+            self.status_var.set(f"Paste error: {str(e)}")
+            
+    def delete_files(self):
+        """Delete selected files"""
+        selection = self.file_tree.selection()
+        if not selection:
+            return
+            
+        files_to_delete = []
+        for item_id in selection:
+            item = self.file_tree.item(item_id)
+            filename = item['values'][0]
+            file_path = os.path.join(self.current_path, filename)
+            files_to_delete.append((filename, file_path))
+            
+        if messagebox.askyesno("Confirm Delete", 
+                              f"Are you sure you want to delete {len(files_to_delete)} items?"):
+            try:
+                for filename, file_path in files_to_delete:
+                    if os.path.isdir(file_path):
+                        shutil.rmtree(file_path)
+                    else:
+                        os.remove(file_path)
+                        
+                self.refresh_view()
+                self.status_var.set(f"Deleted {len(files_to_delete)} items")
+                
+                # Log action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "DELETE_FILES", 
+                                             f"Deleted {len(files_to_delete)} items")
+                    
+            except Exception as e:
+                self.status_var.set(f"Delete error: {str(e)}")
+                
+    def rename_file(self):
+        """Rename selected file"""
+        selection = self.file_tree.selection()
+        if len(selection) != 1:
+            return
+            
+        item = self.file_tree.item(selection[0])
+        old_name = item['values'][0]
+        old_path = os.path.join(self.current_path, old_name)
+        
+        new_name = simpledialog.askstring("Rename", "Enter new name:", initialvalue=old_name)
+        if new_name and new_name != old_name:
+            new_path = os.path.join(self.current_path, new_name)
+            try:
+                os.rename(old_path, new_path)
+                self.refresh_view()
+                self.status_var.set(f"Renamed to: {new_name}")
+                
+                # Log action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "RENAME_FILE", 
+                                             f"Renamed {old_name} to {new_name}")
+                    
+            except Exception as e:
+                self.status_var.set(f"Rename error: {str(e)}")
+                
+    def select_all(self):
+        """Select all files"""
+        for item in self.file_tree.get_children():
+            self.file_tree.selection_add(item)
+            
+    def invert_selection(self):
+        """Invert file selection"""
+        selected = set(self.file_tree.selection())
+        all_items = set(self.file_tree.get_children())
+        
+        # Clear current selection
+        self.file_tree.selection_remove(*selected)
+        
+        # Select unselected items
+        unselected = all_items - selected
+        self.file_tree.selection_add(*unselected)
+        
+    def show_properties(self):
+        """Show properties of selected file"""
+        selection = self.file_tree.selection()
+        if len(selection) != 1:
+            return
+            
+        item = self.file_tree.item(selection[0])
+        filename = item['values'][0]
+        file_path = os.path.join(self.current_path, filename)
+        
+        PropertiesDialog(self.window, file_path)
+        
+    def show_folder_properties(self):
+        """Show properties of current folder"""
+        PropertiesDialog(self.window, self.current_path)
+        
+    def add_bookmark(self):
+        """Add current path to bookmarks"""
+        name = simpledialog.askstring("Add Bookmark", "Enter bookmark name:",
+                                     initialvalue=os.path.basename(self.current_path))
+        if name:
+            self.bookmarks.append((name, self.current_path))
+            self.bookmarks_listbox.insert(tk.END, name)
+            self.status_var.set(f"Added bookmark: {name}")
+            
+    def remove_bookmark(self):
+        """Remove selected bookmark"""
+        selection = self.bookmarks_listbox.curselection()
+        if selection:
+            index = selection[0]
+            if index < len(self.bookmarks):
+                name, path = self.bookmarks.pop(index)
+                self.bookmarks_listbox.delete(index)
+                self.status_var.set(f"Removed bookmark: {name}")
+                
+    def toggle_hidden_files(self):
+        """Toggle showing hidden files"""
+        current = self.config_manager.get("show_hidden_files", False)
+        self.config_manager.set("show_hidden_files", not current)
+        self.refresh_view()
+        
+    def open_search(self):
+        """Open search dialog"""
+        SearchDialog(self.window, self.current_path, self.user_info)
+        
+    def open_terminal_here(self):
+        """Open terminal in current directory"""
+        try:
+            subprocess.Popen(['gnome-terminal', '--working-directory', self.current_path])
+        except:
+            try:
+                subprocess.Popen(['xterm', '-e', f'cd "{self.current_path}" && bash'])
+            except:
+                self.status_var.set("Cannot open terminal")
+                
+    def open_in_new_window(self, path):
+        """Open path in new file manager window"""
+        new_fm = FileManager(self.parent, self.user_info)
+        new_fm.navigate_to(path)
+        
+    def open_with_dialog(self, file_path):
+        """Show open with dialog"""
+        OpenWithDialog(self.window, file_path)
+
+class PropertiesDialog:
+    """File/folder properties dialog"""
+    
+    def __init__(self, parent, file_path):
+        self.parent = parent
+        self.file_path = file_path
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create properties dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title(f"Properties - {os.path.basename(self.file_path)}")
+        self.dialog.geometry("400x500")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (500 // 2)
+        self.dialog.geometry(f"400x500+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # Create notebook for tabs
+        notebook = ttk.Notebook(self.dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # General tab
+        self.create_general_tab(notebook, theme)
+        
+        # Permissions tab
+        self.create_permissions_tab(notebook, theme)
+        
+        # OK button
+        tk.Button(self.dialog, text="OK", command=self.dialog.destroy,
+                 bg=theme["accent_primary"], fg="white", padx=20, pady=5).pack(pady=10)
+                 
+    def create_general_tab(self, notebook, theme):
+        """Create general properties tab"""
+        general_frame = tk.Frame(notebook, bg=theme["bg_primary"])
+        notebook.add(general_frame, text="General")
+        
+        try:
+            stat_info = os.stat(self.file_path)
+            
+            # File icon and name
+            icon_frame = tk.Frame(general_frame, bg=theme["bg_primary"])
+            icon_frame.pack(pady=20)
+            
+            if os.path.isdir(self.file_path):
+                icon = "📁"
+                file_type = "Folder"
+            else:
+                ext = os.path.splitext(self.file_path)[1].lower()
+                icon = "📄"  # Default file icon
+                file_type = f"{ext.upper()} File" if ext else "File"
+                
+            tk.Label(icon_frame, text=icon, font=("Ubuntu", 48),
+                    bg=theme["bg_primary"]).pack()
+            
+            tk.Label(icon_frame, text=os.path.basename(self.file_path),
+                    font=("Ubuntu", 14, "bold"), bg=theme["bg_primary"],
+                    fg=theme["fg_primary"]).pack(pady=5)
+            
+            # Properties
+            props_frame = tk.Frame(general_frame, bg=theme["bg_primary"])
+            props_frame.pack(fill=tk.X, padx=20)
+            
+            properties = [
+                ("Type:", file_type),
+                ("Location:", os.path.dirname(self.file_path)),
+                ("Size:", self.format_size(stat_info.st_size) if not os.path.isdir(self.file_path) else self.get_folder_size()),
+                ("Created:", datetime.datetime.fromtimestamp(stat_info.st_ctime).strftime("%Y-%m-%d %H:%M:%S")),
+                ("Modified:", datetime.datetime.fromtimestamp(stat_info.st_mtime).strftime("%Y-%m-%d %H:%M:%S")),
+                ("Accessed:", datetime.datetime.fromtimestamp(stat_info.st_atime).strftime("%Y-%m-%d %H:%M:%S"))
+            ]
+            
+            for i, (label, value) in enumerate(properties):
+                tk.Label(props_frame, text=label, font=("Ubuntu", 10, "bold"),
+                        bg=theme["bg_primary"], fg=theme["fg_primary"]).grid(row=i, column=0, sticky=tk.W, pady=2)
+                tk.Label(props_frame, text=value, font=("Ubuntu", 10),
+                        bg=theme["bg_primary"], fg=theme["fg_secondary"]).grid(row=i, column=1, sticky=tk.W, padx=10, pady=2)
+                        
+        except Exception as e:
+            tk.Label(general_frame, text=f"Error reading properties: {str(e)}",
+                    bg=theme["bg_primary"], fg=theme["error"]).pack(pady=20)
+                    
+    def create_permissions_tab(self, notebook, theme):
+        """Create permissions tab"""
+        perm_frame = tk.Frame(notebook, bg=theme["bg_primary"])
+        notebook.add(perm_frame, text="Permissions")
+        
+        try:
+            stat_info = os.stat(self.file_path)
+            mode = stat_info.st_mode
+            
+            # Owner permissions
+            owner_frame = tk.LabelFrame(perm_frame, text="Owner", bg=theme["bg_secondary"],
+                                       fg=theme["fg_primary"])
+            owner_frame.pack(fill=tk.X, padx=20, pady=10)
+            
+            tk.Checkbutton(owner_frame, text="Read", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IRUSR else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(owner_frame, text="Write", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IWUSR else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(owner_frame, text="Execute", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IXUSR else tk.DISABLED).pack(anchor=tk.W)
+            
+            # Group permissions
+            group_frame = tk.LabelFrame(perm_frame, text="Group", bg=theme["bg_secondary"],
+                                       fg=theme["fg_primary"])
+            group_frame.pack(fill=tk.X, padx=20, pady=10)
+            
+            tk.Checkbutton(group_frame, text="Read", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IRGRP else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(group_frame, text="Write", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IWGRP else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(group_frame, text="Execute", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IXGRP else tk.DISABLED).pack(anchor=tk.W)
+            
+            # Others permissions
+            others_frame = tk.LabelFrame(perm_frame, text="Others", bg=theme["bg_secondary"],
+                                        fg=theme["fg_primary"])
+            others_frame.pack(fill=tk.X, padx=20, pady=10)
+            
+            tk.Checkbutton(others_frame, text="Read", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IROTH else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(others_frame, text="Write", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IWOTH else tk.DISABLED).pack(anchor=tk.W)
+            tk.Checkbutton(others_frame, text="Execute", bg=theme["bg_secondary"],
+                          fg=theme["fg_primary"], state=tk.NORMAL if mode & stat.S_IXOTH else tk.DISABLED).pack(anchor=tk.W)
+            
+            # Octal representation
+            octal = oct(mode)[-3:]
+            tk.Label(perm_frame, text=f"Octal: {octal}", font=("Ubuntu", 12, "bold"),
+                    bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(pady=20)
+                    
+        except Exception as e:
+            tk.Label(perm_frame, text=f"Error reading permissions: {str(e)}",
+                    bg=theme["bg_primary"], fg=theme["error"]).pack(pady=20)
+                    
+    def format_size(self, size):
+        """Format file size"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} PB"
+        
+    def get_folder_size(self):
+        """Get total size of folder"""
+        try:
+            total_size = 0
+            for dirpath, dirnames, filenames in os.walk(self.file_path):
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    try:
+                        total_size += os.path.getsize(filepath)
+                    except:
+                        continue
+            return self.format_size(total_size)
+        except:
+            return "Unknown"
+
+class SearchDialog:
+    """File search dialog"""
+    
+    def __init__(self, parent, search_path, user_info=None):
+        self.parent = parent
+        self.search_path = search_path
+        self.user_info = user_info
+        self.search_thread = None
+        self.search_cancelled = False
+        
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create search dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Search Files")
+        self.dialog.geometry("600x500")
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (600 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (500 // 2)
+        self.dialog.geometry(f"600x500+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # Search criteria
+        criteria_frame = tk.Frame(self.dialog, bg=theme["bg_secondary"])
+        criteria_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(criteria_frame, text="Search for:", font=("Ubuntu", 10),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        self.search_var = tk.StringVar()
+        tk.Entry(criteria_frame, textvariable=self.search_var, font=("Ubuntu", 10),
+                bg=theme["bg_tertiary"], fg=theme["fg_primary"], width=30).grid(row=0, column=1, padx=5, pady=5)
+        
+        tk.Label(criteria_frame, text="In folder:", font=("Ubuntu", 10),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
+        
+        self.path_var = tk.StringVar(value=self.search_path)
+        tk.Entry(criteria_frame, textvariable=self.path_var, font=("Ubuntu", 10),
+                bg=theme["bg_tertiary"], fg=theme["fg_primary"], width=30).grid(row=1, column=1, padx=5, pady=5)
+        
+        # Search options
+        options_frame = tk.Frame(self.dialog, bg=theme["bg_secondary"])
+        options_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.case_sensitive_var = tk.BooleanVar()
+        tk.Checkbutton(options_frame, text="Case sensitive", variable=self.case_sensitive_var,
+                      bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=5)
+        
+        self.include_subfolders_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(options_frame, text="Include subfolders", variable=self.include_subfolders_var,
+                      bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=5)
+        
+        # Search buttons
+        button_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        button_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.search_btn = tk.Button(button_frame, text="Search", command=self.start_search,
+                                   bg=theme["accent_primary"], fg="white", padx=20)
+        self.search_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.cancel_btn = tk.Button(button_frame, text="Cancel", command=self.cancel_search,
+                                   bg=theme["error"], fg="white", padx=20)
+        self.cancel_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Progress bar
+        self.progress_var = tk.StringVar(value="Ready to search")
+        tk.Label(self.dialog, textvariable=self.progress_var, font=("Ubuntu", 9),
+                bg=theme["bg_primary"], fg=theme["fg_secondary"]).pack(pady=5)
+        
+        # Results
+        results_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        tk.Label(results_frame, text="Search Results:", font=("Ubuntu", 10, "bold"),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(anchor=tk.W)
+        
+        # Results listbox with scrollbar
+        list_frame = tk.Frame(results_frame, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.results_listbox = tk.Listbox(list_frame, bg=theme["bg_tertiary"],
+                                         fg=theme["fg_primary"], font=("Ubuntu", 9))
+        scrollbar = tk.Scrollbar(list_frame, command=self.results_listbox.yview)
+        self.results_listbox.config(yscrollcommand=scrollbar.set)
+        
+        self.results_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.results_listbox.bind('<Double-1>', self.open_selected_result)
+        
+        # Bind Enter key to search
+        self.dialog.bind('<Return>', lambda e: self.start_search())
+        
+    def start_search(self):
+        """Start file search"""
+        search_term = self.search_var.get().strip()
+        if not search_term:
+            return
+            
+        search_path = self.path_var.get().strip()
+        if not os.path.isdir(search_path):
+            messagebox.showerror("Error", "Invalid search path")
+            return
+            
+        # Clear previous results
+        self.results_listbox.delete(0, tk.END)
+        
+        # Update UI
+        self.search_btn.config(state=tk.DISABLED)
+        self.search_cancelled = False
+        self.progress_var.set("Searching...")
+        
+        # Start search in thread
+        self.search_thread = threading.Thread(target=self.perform_search,
+                                             args=(search_term, search_path))
+        self.search_thread.daemon = True
+        self.search_thread.start()
+        
+    def perform_search(self, search_term, search_path):
+        """Perform the actual search"""
+        try:
+            results = []
+            case_sensitive = self.case_sensitive_var.get()
+            include_subfolders = self.include_subfolders_var.get()
+            
+            if not case_sensitive:
+                search_term = search_term.lower()
+                
+            def search_directory(directory):
+                if self.search_cancelled:
+                    return
+                    
+                try:
+                    for item in os.listdir(directory):
+                        if self.search_cancelled:
+                            return
+                            
+                        item_path = os.path.join(directory, item)
+                        
+                        # Check if item matches search term
+                        item_name = item if case_sensitive else item.lower()
+                        if search_term in item_name:
+                            results.append(item_path)
+                            
+                            # Update UI in main thread
+                            self.dialog.after(0, lambda path=item_path: self.add_result(path))
+                            
+                        # Search subdirectories if enabled
+                        if include_subfolders and os.path.isdir(item_path):
+                            search_directory(item_path)
+                            
+                except PermissionError:
+                    pass  # Skip directories we can't access
+                except Exception as e:
+                    logging.error(f"Search error in {directory}: {e}")
+                    
+            search_directory(search_path)
+            
+            # Update UI when search is complete
+            if not self.search_cancelled:
+                self.dialog.after(0, lambda: self.search_complete(len(results)))
+                
+        except Exception as e:
+            logging.error(f"Search error: {e}")
+            self.dialog.after(0, lambda: self.progress_var.set(f"Search error: {str(e)}"))
+            
+    def add_result(self, file_path):
+        """Add search result to listbox"""
+        self.results_listbox.insert(tk.END, file_path)
+        self.progress_var.set(f"Found {self.results_listbox.size()} items...")
+        
+    def search_complete(self, count):
+        """Handle search completion"""
+        self.search_btn.config(state=tk.NORMAL)
+        self.progress_var.set(f"Search complete. Found {count} items.")
+        
+        # Log search action
+        if self.user_info:
+            db_manager = DatabaseManager()
+            db_manager.log_action(self.user_info[0], "SEARCH_FILES", 
+                                f"Searched for '{self.search_var.get()}' in {self.path_var.get()}")
+            
+    def cancel_search(self):
+        """Cancel ongoing search"""
+        self.search_cancelled = True
+        self.search_btn.config(state=tk.NORMAL)
+        self.progress_var.set("Search cancelled")
+        
+    def open_selected_result(self, event=None):
+        """Open selected search result"""
+        selection = self.results_listbox.curselection()
+        if selection:
+            file_path = self.results_listbox.get(selection[0])
+            
+            if os.path.isdir(file_path):
+                # Open in file manager
+                FileManager(self.parent, self.user_info).navigate_to(file_path)
+            else:
+                # Open file with appropriate application
+                try:
+                    subprocess.run(['xdg-open', file_path])
+                except:
+                    messagebox.showerror("Error", "Cannot open file")
+
+class OpenWithDialog:
+    """Open with application dialog"""
+    
+    def __init__(self, parent, file_path):
+        self.parent = parent
+        self.file_path = file_path
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create open with dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Open With")
+        self.dialog.geometry("400x300")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (300 // 2)
+        self.dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # File info
+        tk.Label(self.dialog, text=f"Open: {os.path.basename(self.file_path)}",
+                font=("Ubuntu", 12, "bold"), bg=theme["bg_primary"],
+                fg=theme["fg_primary"]).pack(pady=10)
+        
+        # Application list
+        tk.Label(self.dialog, text="Choose an application:",
+                font=("Ubuntu", 10), bg=theme["bg_primary"],
+                fg=theme["fg_secondary"]).pack(pady=5)
+        
+        list_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        self.app_listbox = tk.Listbox(list_frame, bg=theme["bg_tertiary"],
+                                     fg=theme["fg_primary"], font=("Ubuntu", 10))
+        scrollbar = tk.Scrollbar(list_frame, command=self.app_listbox.yview)
+        self.app_listbox.config(yscrollcommand=scrollbar.set)
+        
+        self.app_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate applications
+        self.populate_applications()
+        
+        # Buttons
+        button_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        button_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Button(button_frame, text="OK", command=self.open_with_selected,
+                 bg=theme["accent_primary"], fg="white", padx=20).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Cancel", command=self.dialog.destroy,
+                 bg=theme["error"], fg="white", padx=20).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Browse...", command=self.browse_application,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=20).pack(side=tk.RIGHT, padx=5)
+        
+    def populate_applications(self):
+        """Populate application list"""
+        # Common applications
+        applications = [
+            ("Text Editor", "gedit"),
+            ("Code Editor", "code"),
+            ("Image Viewer", "eog"),
+            ("Web Browser", "firefox"),
+            ("Media Player", "vlc"),
+            ("Archive Manager", "file-roller"),
+            ("Terminal", "gnome-terminal")
+        ]
+        
+        for name, command in applications:
+            self.app_listbox.insert(tk.END, f"{name} ({command})")
+            
+    def open_with_selected(self):
+        """Open file with selected application"""
+        selection = self.app_listbox.curselection()
+        if selection:
+            app_text = self.app_listbox.get(selection[0])
+            # Extract command from text (between parentheses)
+            start = app_text.find('(') + 1
+            end = app_text.find(')')
+            if start > 0 and end > start:
+                command = app_text[start:end]
+                try:
+                    subprocess.run([command, self.file_path])
+                    self.dialog.destroy()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Cannot open with {command}: {str(e)}")
+                    
+    def browse_application(self):
+        """Browse for application"""
+        app_path = filedialog.askopenfilename(title="Select Application",
+                                            filetypes=[("Executable files", "*")])
+        if app_path:
+            try:
+                subprocess.run([app_path, self.file_path])
+                self.dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot open with {app_path}: {str(e)}")
+
+class TextEditor:
+    """Advanced text editor with syntax highlighting"""
+    
+    def __init__(self, parent, file_path=None, user_info=None):
+        self.parent = parent
+        self.file_path = file_path
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        self.modified = False
+        self.undo_stack = []
+        self.redo_stack = []
+        
+        self.create_window()
+        
+        if file_path:
+            self.load_file()
+            
+    def create_window(self):
+        """Create text editor window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Text Editor - Berke0S")
+        self.window.geometry("800x600")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create toolbar
+        self.create_toolbar()
+        
+        # Create text area
+        self.create_text_area()
+        
+        # Create status bar
+        self.create_status_bar()
+        
+        # Bind events
+        self.bind_events()
+        
+    def create_menu_bar(self):
+        """Create menu bar"""
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="New", command=self.new_file, accelerator="Ctrl+N")
+        file_menu.add_command(label="Open", command=self.open_file, accelerator="Ctrl+O")
+        file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S")
+        file_menu.add_command(label="Save As", command=self.save_as, accelerator="Ctrl+Shift+S")
+        file_menu.add_separator()
+        file_menu.add_command(label="Print", command=self.print_file, accelerator="Ctrl+P")
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.window.destroy)
+        
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Undo", command=self.undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="Redo", command=self.redo, accelerator="Ctrl+Y")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Cut", command=self.cut, accelerator="Ctrl+X")
+        edit_menu.add_command(label="Copy", command=self.copy, accelerator="Ctrl+C")
+        edit_menu.add_command(label="Paste", command=self.paste, accelerator="Ctrl+V")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Select All", command=self.select_all, accelerator="Ctrl+A")
+        edit_menu.add_command(label="Find", command=self.find, accelerator="Ctrl+F")
+        edit_menu.add_command(label="Replace", command=self.replace, accelerator="Ctrl+H")
+        
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Word Wrap", command=self.toggle_word_wrap)
+        view_menu.add_command(label="Line Numbers", command=self.toggle_line_numbers)
+        view_menu.add_command(label="Zoom In", command=self.zoom_in, accelerator="Ctrl++")
+        view_menu.add_command(label="Zoom Out", command=self.zoom_out, accelerator="Ctrl+-")
+        
+        # Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Tools", menu=tools_menu)
+        tools_menu.add_command(label="Word Count", command=self.word_count)
+        tools_menu.add_command(label="Go to Line", command=self.go_to_line, accelerator="Ctrl+G")
+        
+    def create_toolbar(self):
+        """Create toolbar"""
+        theme = self.config_manager.get_theme()
+        
+        toolbar = tk.Frame(self.window, bg=theme["bg_secondary"], height=40)
+        toolbar.pack(fill=tk.X)
+        toolbar.pack_propagate(False)
+        
+        # File operations
+        file_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        file_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(file_frame, text="New", command=self.new_file,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(file_frame, text="Open", command=self.open_file,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(file_frame, text="Save", command=self.save_file,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        tk.Frame(toolbar, bg=theme["border"], width=2).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        
+        # Edit operations
+        edit_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        edit_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(edit_frame, text="Undo", command=self.undo,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(edit_frame, text="Redo", command=self.redo,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        tk.Frame(toolbar, bg=theme["border"], width=2).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        
+        # Search
+        search_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        search_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(search_frame, text="Find", command=self.find,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Font size
+        font_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        font_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        tk.Label(font_frame, text="Font Size:", bg=theme["bg_secondary"],
+                fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=2)
+        
+        self.font_size_var = tk.StringVar(value="12")
+        font_combo = ttk.Combobox(font_frame, textvariable=self.font_size_var,
+                                 values=["8", "9", "10", "11", "12", "14", "16", "18", "20", "24"],
+                                 width=5, state="readonly")
+        font_combo.pack(side=tk.LEFT, padx=2)
+        font_combo.bind('<<ComboboxSelected>>', self.change_font_size)
+        
+    def create_text_area(self):
+        """Create text editing area"""
+        theme = self.config_manager.get_theme()
+        
+        # Main frame for text area
+        text_frame = tk.Frame(self.window, bg=theme["bg_primary"])
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Line numbers frame
+        self.line_numbers_frame = tk.Frame(text_frame, bg=theme["bg_secondary"], width=50)
+        self.line_numbers_frame.pack(side=tk.LEFT, fill=tk.Y)
+        
+        self.line_numbers = tk.Text(self.line_numbers_frame, width=4, padx=3, takefocus=0,
+                                   border=0, state='disabled', wrap='none',
+                                   bg=theme["bg_secondary"], fg=theme["fg_tertiary"],
+                                   font=("Ubuntu Mono", 12))
+        self.line_numbers.pack(side=tk.TOP, fill=tk.Y)
+        
+        # Text widget with scrollbars
+        text_container = tk.Frame(text_frame, bg=theme["bg_primary"])
+        text_container.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        self.text_widget = tk.Text(text_container, wrap=tk.WORD, undo=True,
+                                  bg=theme["bg_primary"], fg=theme["fg_primary"],
+                                  insertbackground=theme["fg_primary"],
+                                  selectbackground=theme["accent_primary"],
+                                  font=("Ubuntu Mono", 12))
+        
+        # Scrollbars
+        v_scrollbar = tk.Scrollbar(text_container, orient=tk.VERTICAL, command=self.text_widget.yview)
+        h_scrollbar = tk.Scrollbar(text_container, orient=tk.HORIZONTAL, command=self.text_widget.xview)
+        
+        self.text_widget.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack widgets
+        self.text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Configure syntax highlighting
+        self.configure_syntax_highlighting()
+        
+    def create_status_bar(self):
+        """Create status bar"""
+        theme = self.config_manager.get_theme()
+        
+        self.status_bar = tk.Frame(self.window, bg=theme["bg_secondary"], height=25)
+        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        self.status_bar.pack_propagate(False)
+        
+        # Status labels
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_label = tk.Label(self.status_bar, textvariable=self.status_var,
+                                    font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                    fg=theme["fg_secondary"])
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=2)
+        
+        # Cursor position
+        self.cursor_var = tk.StringVar(value="Line 1, Column 1")
+        self.cursor_label = tk.Label(self.status_bar, textvariable=self.cursor_var,
+                                    font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                    fg=theme["fg_secondary"])
+        self.cursor_label.pack(side=tk.RIGHT, padx=10, pady=2)
+        
+        # File encoding
+        self.encoding_var = tk.StringVar(value="UTF-8")
+        self.encoding_label = tk.Label(self.status_bar, textvariable=self.encoding_var,
+                                      font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                      fg=theme["fg_secondary"])
+        self.encoding_label.pack(side=tk.RIGHT, padx=10, pady=2)
+        
+    def configure_syntax_highlighting(self):
+        """Configure syntax highlighting"""
+        theme = self.config_manager.get_theme()
+        
+        # Define syntax highlighting tags
+        self.text_widget.tag_configure("keyword", foreground="#ff79c6", font=("Ubuntu Mono", 12, "bold"))
+        self.text_widget.tag_configure("string", foreground="#f1fa8c")
+        self.text_widget.tag_configure("comment", foreground="#6272a4", font=("Ubuntu Mono", 12, "italic"))
+        self.text_widget.tag_configure("number", foreground="#bd93f9")
+        self.text_widget.tag_configure("function", foreground="#50fa7b")
+        
+    def bind_events(self):
+        """Bind keyboard and mouse events"""
+        # Keyboard shortcuts
+        self.window.bind('<Control-n>', lambda e: self.new_file())
+        self.window.bind('<Control-o>', lambda e: self.open_file())
+        self.window.bind('<Control-s>', lambda e: self.save_file())
+        self.window.bind('<Control-Shift-S>', lambda e: self.save_as())
+        self.window.bind('<Control-z>', lambda e: self.undo())
+        self.window.bind('<Control-y>', lambda e: self.redo())
+        self.window.bind('<Control-f>', lambda e: self.find())
+        self.window.bind('<Control-h>', lambda e: self.replace())
+        self.window.bind('<Control-g>', lambda e: self.go_to_line())
+        self.window.bind('<Control-a>', lambda e: self.select_all())
+        self.window.bind('<Control-plus>', lambda e: self.zoom_in())
+        self.window.bind('<Control-minus>', lambda e: self.zoom_out())
+        
+        # Text change events
+        self.text_widget.bind('<KeyRelease>', self.on_text_change)
+        self.text_widget.bind('<Button-1>', self.update_cursor_position)
+        self.text_widget.bind('<KeyPress>', self.update_cursor_position)
+        
+        # Window close event
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+    def on_text_change(self, event=None):
+        """Handle text change events"""
+        self.modified = True
+        self.update_title()
+        self.update_line_numbers()
+        self.apply_syntax_highlighting()
+        self.update_cursor_position()
+        
+    def update_title(self):
+        """Update window title"""
+        title = "Text Editor - Berke0S"
+        if self.file_path:
+            title = f"{os.path.basename(self.file_path)} - Text Editor - Berke0S"
+        if self.modified:
+            title = "* " + title
+        self.window.title(title)
+        
+    def update_line_numbers(self):
+        """Update line numbers"""
+        self.line_numbers.config(state='normal')
+        self.line_numbers.delete('1.0', tk.END)
+        
+        # Get number of lines
+        line_count = int(self.text_widget.index('end-1c').split('.')[0])
+        
+        # Generate line numbers
+        line_numbers_text = '\n'.join(str(i) for i in range(1, line_count + 1))
+        self.line_numbers.insert('1.0', line_numbers_text)
+        
+        self.line_numbers.config(state='disabled')
+        
+    def update_cursor_position(self, event=None):
+        """Update cursor position in status bar"""
+        cursor_pos = self.text_widget.index(tk.INSERT)
+        line, column = cursor_pos.split('.')
+        self.cursor_var.set(f"Line {line}, Column {int(column) + 1}")
+        
+    def apply_syntax_highlighting(self):
+        """Apply syntax highlighting based on file extension"""
+        if not self.file_path:
+            return
+            
+        ext = os.path.splitext(self.file_path)[1].lower()
+        
+        # Clear existing tags
+        for tag in ["keyword", "string", "comment", "number", "function"]:
+            self.text_widget.tag_remove(tag, "1.0", tk.END)
+            
+        content = self.text_widget.get("1.0", tk.END)
+        
+        if ext == '.py':
+            self.highlight_python(content)
+        elif ext in ['.js', '.json']:
+            self.highlight_javascript(content)
+        elif ext in ['.html', '.htm']:
+            self.highlight_html(content)
+        elif ext == '.css':
+            self.highlight_css(content)
+            
+    def highlight_python(self, content):
+        """Highlight Python syntax"""
+        import re
+        
+        # Keywords
+        keywords = ['def', 'class', 'if', 'elif', 'else', 'for', 'while', 'try', 'except', 
+                   'finally', 'import', 'from', 'as', 'return', 'yield', 'break', 'continue',
+                   'pass', 'and', 'or', 'not', 'in', 'is', 'lambda', 'with', 'global', 'nonlocal']
+        
+        for keyword in keywords:
+            pattern = r'\b' + keyword + r'\b'
+            for match in re.finditer(pattern, content):
+                start = f"1.0+{match.start()}c"
+                end = f"1.0+{match.end()}c"
+                self.text_widget.tag_add("keyword", start, end)
+                
+        # Strings
+        string_patterns = [r'"[^"]*"', r"'[^']*'", r'""".*?"""', r"'''.*?'''"]
+        for pattern in string_patterns:
+            for match in re.finditer(pattern, content, re.DOTALL):
+                start = f"1.0+{match.start()}c"
+                end = f"1.0+{match.end()}c"
+                self.text_widget.tag_add("string", start, end)
+                
+        # Comments
+        for match in re.finditer(r'#.*$', content, re.MULTILINE):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("comment", start, end)
+            
+        # Numbers
+        for match in re.finditer(r'\b\d+\.?\d*\b', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("number", start, end)
+            
+    def highlight_javascript(self, content):
+        """Highlight JavaScript syntax"""
+        import re
+        
+        # Keywords
+        keywords = ['function', 'var', 'let', 'const', 'if', 'else', 'for', 'while', 'do',
+                   'switch', 'case', 'default', 'break', 'continue', 'return', 'try', 'catch',
+                   'finally', 'throw', 'new', 'this', 'typeof', 'instanceof']
+        
+        for keyword in keywords:
+            pattern = r'\b' + keyword + r'\b'
+            for match in re.finditer(pattern, content):
+                start = f"1.0+{match.start()}c"
+                end = f"1.0+{match.end()}c"
+                self.text_widget.tag_add("keyword", start, end)
+                
+        # Strings
+        string_patterns = [r'"[^"]*"', r"'[^']*'", r'`[^`]*`']
+        for pattern in string_patterns:
+            for match in re.finditer(pattern, content):
+                start = f"1.0+{match.start()}c"
+                end = f"1.0+{match.end()}c"
+                self.text_widget.tag_add("string", start, end)
+                
+        # Comments
+        for match in re.finditer(r'//.*$|/\*.*?\*/', content, re.MULTILINE | re.DOTALL):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("comment", start, end)
+            
+    def highlight_html(self, content):
+        """Highlight HTML syntax"""
+        import re
+        
+        # Tags
+        for match in re.finditer(r'<[^>]+>', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("keyword", start, end)
+            
+        # Strings (attributes)
+        for match in re.finditer(r'"[^"]*"|\'[^\']*\'', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("string", start, end)
+            
+        # Comments
+        for match in re.finditer(r'<!--.*?-->', content, re.DOTALL):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("comment", start, end)
+            
+    def highlight_css(self, content):
+        """Highlight CSS syntax"""
+        import re
+        
+        # Selectors
+        for match in re.finditer(r'[^{]+(?=\s*{)', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("keyword", start, end)
+            
+        # Properties
+        for match in re.finditer(r'[^:]+(?=\s*:)', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("function", start, end)
+            
+        # Values
+        for match in re.finditer(r':\s*[^;]+', content):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("string", start, end)
+            
+        # Comments
+        for match in re.finditer(r'/\*.*?\*/', content, re.DOTALL):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.text_widget.tag_add("comment", start, end)
+            
+    def new_file(self):
+        """Create new file"""
+        if self.modified:
+            if not self.ask_save_changes():
+                return
+                
+        self.text_widget.delete("1.0", tk.END)
+        self.file_path = None
+        self.modified = False
+        self.update_title()
+        self.status_var.set("New file created")
+        
+    def open_file(self):
+        """Open file dialog and load file"""
+        if self.modified:
+            if not self.ask_save_changes():
+                return
+                
+        file_path = filedialog.askopenfilename(
+            title="Open File",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("Python files", "*.py"),
+                ("JavaScript files", "*.js"),
+                ("HTML files", "*.html *.htm"),
+                ("CSS files", "*.css"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            self.file_path = file_path
+            self.load_file()
+            
+    def load_file(self):
+        """Load file content"""
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            self.text_widget.delete("1.0", tk.END)
+            self.text_widget.insert("1.0", content)
+            
+            self.modified = False
+            self.update_title()
+            self.update_line_numbers()
+            self.apply_syntax_highlighting()
+            
+            self.status_var.set(f"Loaded: {os.path.basename(self.file_path)}")
+            
+            # Log file access
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "OPEN_TEXT_FILE", 
+                                         f"Opened {self.file_path} in text editor")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot open file: {str(e)}")
+            self.status_var.set(f"Error loading file: {str(e)}")
+            
+    def save_file(self):
+        """Save current file"""
+        if not self.file_path:
+            self.save_as()
+            return
+            
+        try:
+            content = self.text_widget.get("1.0", tk.END + "-1c")
+            
+            with open(self.file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+                
+            self.modified = False
+            self.update_title()
+            self.status_var.set(f"Saved: {os.path.basename(self.file_path)}")
+            
+            # Log file save
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "SAVE_TEXT_FILE", 
+                                         f"Saved {self.file_path}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot save file: {str(e)}")
+            self.status_var.set(f"Error saving file: {str(e)}")
+            
+    def save_as(self):
+        """Save file with new name"""
+        file_path = filedialog.asksaveasfilename(
+            title="Save As",
+            defaultextension=".txt",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("Python files", "*.py"),
+                ("JavaScript files", "*.js"),
+                ("HTML files", "*.html"),
+                ("CSS files", "*.css"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            self.file_path = file_path
+            self.save_file()
+            
+    def ask_save_changes(self):
+        """Ask user to save changes"""
+        if not self.modified:
+            return True
+            
+        result = messagebox.askyesnocancel(
+            "Save Changes",
+            "Do you want to save changes to the current file?"
+        )
+        
+        if result is True:  # Yes
+            self.save_file()
+            return not self.modified  # Return True if save was successful
+        elif result is False:  # No
+            return True
+        else:  # Cancel
+            return False
+            
+    def undo(self):
+        """Undo last action"""
+        try:
+            self.text_widget.edit_undo()
+            self.on_text_change()
+        except tk.TclError:
+            pass
+            
+    def redo(self):
+        """Redo last undone action"""
+        try:
+            self.text_widget.edit_redo()
+            self.on_text_change()
+        except tk.TclError:
+            pass
+            
+    def cut(self):
+        """Cut selected text"""
+        try:
+            self.text_widget.event_generate("<<Cut>>")
+            self.on_text_change()
+        except tk.TclError:
+            pass
+            
+    def copy(self):
+        """Copy selected text"""
+        try:
+            self.text_widget.event_generate("<<Copy>>")
+        except tk.TclError:
+            pass
+            
+    def paste(self):
+        """Paste text from clipboard"""
+        try:
+            self.text_widget.event_generate("<<Paste>>")
+            self.on_text_change()
+        except tk.TclError:
+            pass
+            
+    def select_all(self):
+        """Select all text"""
+        self.text_widget.tag_add(tk.SEL, "1.0", tk.END)
+        self.text_widget.mark_set(tk.INSERT, "1.0")
+        self.text_widget.see(tk.INSERT)
+        
+    def find(self):
+        """Open find dialog"""
+        FindDialog(self.window, self.text_widget)
+        
+    def replace(self):
+        """Open replace dialog"""
+        ReplaceDialog(self.window, self.text_widget)
+        
+    def go_to_line(self):
+        """Go to specific line"""
+        line_num = simpledialog.askinteger("Go to Line", "Enter line number:")
+        if line_num:
+            self.text_widget.mark_set(tk.INSERT, f"{line_num}.0")
+            self.text_widget.see(tk.INSERT)
+            self.update_cursor_position()
+            
+    def word_count(self):
+        """Show word count dialog"""
+        content = self.text_widget.get("1.0", tk.END + "-1c")
+        
+        lines = len(content.splitlines())
+        words = len(content.split())
+        chars = len(content)
+        chars_no_spaces = len(content.replace(" ", "").replace("\n", "").replace("\t", ""))
+        
+        message = f"Lines: {lines}\nWords: {words}\nCharacters: {chars}\nCharacters (no spaces): {chars_no_spaces}"
+        messagebox.showinfo("Word Count", message)
+        
+    def toggle_word_wrap(self):
+        """Toggle word wrap"""
+        current_wrap = self.text_widget.cget("wrap")
+        new_wrap = tk.NONE if current_wrap == tk.WORD else tk.WORD
+        self.text_widget.config(wrap=new_wrap)
+        
+    def toggle_line_numbers(self):
+        """Toggle line numbers visibility"""
+        if self.line_numbers_frame.winfo_viewable():
+            self.line_numbers_frame.pack_forget()
+        else:
+            self.line_numbers_frame.pack(side=tk.LEFT, fill=tk.Y, before=self.text_widget.master)
+            
+    def zoom_in(self):
+        """Increase font size"""
+        current_size = int(self.font_size_var.get())
+        new_size = min(current_size + 2, 24)
+        self.font_size_var.set(str(new_size))
+        self.change_font_size()
+        
+    def zoom_out(self):
+        """Decrease font size"""
+        current_size = int(self.font_size_var.get())
+        new_size = max(current_size - 2, 8)
+        self.font_size_var.set(str(new_size))
+        self.change_font_size()
+        
+    def change_font_size(self, event=None):
+        """Change font size"""
+        size = int(self.font_size_var.get())
+        font = ("Ubuntu Mono", size)
+        self.text_widget.config(font=font)
+        self.line_numbers.config(font=font)
+        
+    def print_file(self):
+        """Print file (placeholder)"""
+        messagebox.showinfo("Print", "Print functionality not implemented yet.")
+        
+    def on_closing(self):
+        """Handle window closing"""
+        if self.modified:
+            if self.ask_save_changes():
+                self.window.destroy()
+        else:
+            self.window.destroy()
+
+class FindDialog:
+    """Find text dialog"""
+    
+    def __init__(self, parent, text_widget):
+        self.parent = parent
+        self.text_widget = text_widget
+        self.last_search_index = "1.0"
+        
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create find dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Find")
+        self.dialog.geometry("350x150")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (350 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (150 // 2)
+        self.dialog.geometry(f"350x150+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # Search input
+        tk.Label(self.dialog, text="Find:", font=("Ubuntu", 10),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(pady=10)
+        
+        self.search_var = tk.StringVar()
+        search_entry = tk.Entry(self.dialog, textvariable=self.search_var,
+                               font=("Ubuntu", 10), bg=theme["bg_tertiary"],
+                               fg=theme["fg_primary"], width=30)
+        search_entry.pack(pady=5)
+        search_entry.focus()
+        
+        # Options
+        options_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        options_frame.pack(pady=10)
+        
+        self.case_sensitive_var = tk.BooleanVar()
+        tk.Checkbutton(options_frame, text="Case sensitive", variable=self.case_sensitive_var,
+                      bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=5)
+        
+        # Buttons
+        button_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        button_frame.pack(pady=10)
+        
+        tk.Button(button_frame, text="Find Next", command=self.find_next,
+                 bg=theme["accent_primary"], fg="white", padx=15).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Close", command=self.dialog.destroy,
+                 bg=theme["error"], fg="white", padx=15).pack(side=tk.LEFT, padx=5)
+        
+        # Bind Enter key
+        self.dialog.bind('<Return>', lambda e: self.find_next())
+        
+    def find_next(self):
+        """Find next occurrence"""
+        search_text = self.search_var.get()
+        if not search_text:
+            return
+            
+        # Clear previous highlights
+        self.text_widget.tag_remove("search_highlight", "1.0", tk.END)
+        
+        # Search options
+        nocase = 0 if self.case_sensitive_var.get() else 1
+        
+        # Find text
+        pos = self.text_widget.search(search_text, self.last_search_index, tk.END, nocase=nocase)
+        
+        if pos:
+            # Highlight found text
+            end_pos = f"{pos}+{len(search_text)}c"
+            self.text_widget.tag_add("search_highlight", pos, end_pos)
+            self.text_widget.tag_config("search_highlight", background="yellow", foreground="black")
+            
+            # Move cursor and scroll to position
+            self.text_widget.mark_set(tk.INSERT, pos)
+            self.text_widget.see(pos)
+            
+            # Update search index for next search
+            self.last_search_index = end_pos
+        else:
+            # Not found, start from beginning
+            self.last_search_index = "1.0"
+            messagebox.showinfo("Find", f"'{search_text}' not found.")
+
+class ReplaceDialog:
+    """Find and replace dialog"""
+    
+    def __init__(self, parent, text_widget):
+        self.parent = parent
+        self.text_widget = text_widget
+        self.last_search_index = "1.0"
+        
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create replace dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Find and Replace")
+        self.dialog.geometry("400x200")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (200 // 2)
+        self.dialog.geometry(f"400x200+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # Find input
+        tk.Label(self.dialog, text="Find:", font=("Ubuntu", 10),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        self.find_var = tk.StringVar()
+        find_entry = tk.Entry(self.dialog, textvariable=self.find_var,
+                             font=("Ubuntu", 10), bg=theme["bg_tertiary"],
+                             fg=theme["fg_primary"], width=35)
+        find_entry.pack(pady=2)
+        find_entry.focus()
+        
+        # Replace input
+        tk.Label(self.dialog, text="Replace with:", font=("Ubuntu", 10),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        self.replace_var = tk.StringVar()
+        replace_entry = tk.Entry(self.dialog, textvariable=self.replace_var,
+                                font=("Ubuntu", 10), bg=theme["bg_tertiary"],
+                                fg=theme["fg_primary"], width=35)
+        replace_entry.pack(pady=2)
+        
+        # Options
+        options_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        options_frame.pack(pady=10)
+        
+        self.case_sensitive_var = tk.BooleanVar()
+        tk.Checkbutton(options_frame, text="Case sensitive", variable=self.case_sensitive_var,
+                      bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=5)
+        
+        # Buttons
+        button_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        button_frame.pack(pady=10)
+        
+        tk.Button(button_frame, text="Find Next", command=self.find_next,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(button_frame, text="Replace", command=self.replace_current,
+                 bg=theme["warning"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(button_frame, text="Replace All", command=self.replace_all,
+                 bg=theme["warning"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(button_frame, text="Close", command=self.dialog.destroy,
+                 bg=theme["error"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+    def find_next(self):
+        """Find next occurrence"""
+        find_text = self.find_var.get()
+        if not find_text:
+            return
+            
+        # Clear previous highlights
+        self.text_widget.tag_remove("search_highlight", "1.0", tk.END)
+        
+        # Search options
+        nocase = 0 if self.case_sensitive_var.get() else 1
+        
+        # Find text
+        pos = self.text_widget.search(find_text, self.last_search_index, tk.END, nocase=nocase)
+        
+        if pos:
+            # Highlight found text
+            end_pos = f"{pos}+{len(find_text)}c"
+            self.text_widget.tag_add("search_highlight", pos, end_pos)
+            self.text_widget.tag_config("search_highlight", background="yellow", foreground="black")
+            
+            # Move cursor and scroll to position
+            self.text_widget.mark_set(tk.INSERT, pos)
+            self.text_widget.see(pos)
+            
+            # Update search index for next search
+            self.last_search_index = end_pos
+        else:
+            # Not found, start from beginning
+            self.last_search_index = "1.0"
+            messagebox.showinfo("Find", f"'{find_text}' not found.")
+            
+    def replace_current(self):
+        """Replace current selection"""
+        if self.text_widget.tag_ranges("search_highlight"):
+            # Get highlighted text range
+            start = self.text_widget.index("search_highlight.first")
+            end = self.text_widget.index("search_highlight.last")
+            
+            # Replace text
+            self.text_widget.delete(start, end)
+            self.text_widget.insert(start, self.replace_var.get())
+            
+            # Clear highlight
+            self.text_widget.tag_remove("search_highlight", "1.0", tk.END)
+            
+            # Find next occurrence
+            self.find_next()
+            
+    def replace_all(self):
+        """Replace all occurrences"""
+        find_text = self.find_var.get()
+        replace_text = self.replace_var.get()
+        
+        if not find_text:
+            return
+            
+        # Get all text
+        content = self.text_widget.get("1.0", tk.END + "-1c")
+        
+        # Count occurrences
+        if self.case_sensitive_var.get():
+            count = content.count(find_text)
+            new_content = content.replace(find_text, replace_text)
+        else:
+            import re
+            count = len(re.findall(re.escape(find_text), content, re.IGNORECASE))
+            new_content = re.sub(re.escape(find_text), replace_text, content, flags=re.IGNORECASE)
+            
+        if count > 0:
+            # Replace all text
+            self.text_widget.delete("1.0", tk.END)
+            self.text_widget.insert("1.0", new_content)
+            
+            messagebox.showinfo("Replace All", f"Replaced {count} occurrences.")
+        else:
+            messagebox.showinfo("Replace All", f"'{find_text}' not found.")
+
+class Calculator:
+    """Advanced scientific calculator"""
+    
+    def __init__(self, parent, user_info=None):
+        self.parent = parent
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        
+        self.expression = ""
+        self.result = 0
+        self.memory = 0
+        self.history = []
+        
+        self.create_window()
+        
+    def create_window(self):
+        """Create calculator window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Calculator - Berke0S")
+        self.window.geometry("400x600")
+        self.window.resizable(False, False)
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create display
+        self.create_display()
+        
+        # Create buttons
+        self.create_buttons()
+        
+        # Create menu
+        self.create_menu()
+        
+        # Log calculator open
+        if self.user_info:
+            self.db_manager.log_action(self.user_info[0], "OPEN_CALCULATOR", "Opened calculator")
+            
+    def create_display(self):
+        """Create calculator display"""
+        theme = self.config_manager.get_theme()
+        
+        display_frame = tk.Frame(self.window, bg=theme["bg_secondary"], height=120)
+        display_frame.pack(fill=tk.X, padx=10, pady=10)
+        display_frame.pack_propagate(False)
+        
+        # Expression display
+        self.expression_var = tk.StringVar(value="0")
+        expression_label = tk.Label(display_frame, textvariable=self.expression_var,
+                                   font=("Ubuntu Mono", 12), bg=theme["bg_secondary"],
+                                   fg=theme["fg_secondary"], anchor="e")
+        expression_label.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Result display
+        self.result_var = tk.StringVar(value="0")
+        result_label = tk.Label(display_frame, textvariable=self.result_var,
+                               font=("Ubuntu Mono", 20, "bold"), bg=theme["bg_secondary"],
+                               fg=theme["fg_primary"], anchor="e")
+        result_label.pack(fill=tk.X, padx=10, pady=5)
+        
+    def create_buttons(self):
+        """Create calculator buttons"""
+        theme = self.config_manager.get_theme()
+        
+        button_frame = tk.Frame(self.window, bg=theme["bg_primary"])
+        button_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Button configuration
+        button_config = {
+            "font": ("Ubuntu", 12, "bold"),
+            "width": 6,
+            "height": 2,
+            "relief": tk.RAISED,
+            "bd": 2
+        }
+        
+        # Button layout (text, row, col, colspan, color_type)
+        buttons = [
+            # Row 0 - Memory and functions
+            ("MC", 0, 0, 1, "memory"),
+            ("MR", 0, 1, 1, "memory"),
+            ("M+", 0, 2, 1, "memory"),
+            ("M-", 0, 3, 1, "memory"),
+            ("MS", 0, 4, 1, "memory"),
+            
+            # Row 1 - Advanced functions
+            ("sin", 1, 0, 1, "function"),
+            ("cos", 1, 1, 1, "function"),
+            ("tan", 1, 2, 1, "function"),
+            ("log", 1, 3, 1, "function"),
+            ("ln", 1, 4, 1, "function"),
+            
+            # Row 2 - More functions
+            ("√", 2, 0, 1, "function"),
+            ("x²", 2, 1, 1, "function"),
+            ("x^y", 2, 2, 1, "function"),
+            ("π", 2, 3, 1, "function"),
+            ("e", 2, 4, 1, "function"),
+            
+            # Row 3 - Clear and operations
+            ("C", 3, 0, 1, "clear"),
+            ("CE", 3, 1, 1, "clear"),
+            ("⌫", 3, 2, 1, "clear"),
+            ("±", 3, 3, 1, "operation"),
+            ("÷", 3, 4, 1, "operation"),
+            
+            # Row 4 - Numbers and operations
+            ("7", 4, 0, 1, "number"),
+            ("8", 4, 1, 1, "number"),
+            ("9", 4, 2, 1, "number"),
+            ("×", 4, 3, 1, "operation"),
+            ("(", 4, 4, 1, "operation"),
+            
+            # Row 5
+            ("4", 5, 0, 1, "number"),
+            ("5", 5, 1, 1, "number"),
+            ("6", 5, 2, 1, "number"),
+            ("-", 5, 3, 1, "operation"),
+            (")", 5, 4, 1, "operation"),
+            
+            # Row 6
+            ("1", 6, 0, 1, "number"),
+            ("2", 6, 1, 1, "number"),
+            ("3", 6, 2, 1, "number"),
+            ("+", 6, 3, 1, "operation"),
+            ("=", 6, 4, 2, "equals"),
+            
+            # Row 7
+            ("0", 7, 0, 2, "number"),
+            (".", 7, 2, 1, "number"),
+            ("%", 7, 3, 1, "operation"),
+        ]
+        
+        # Color schemes for different button types
+        colors = {
+            "number": {"bg": theme["bg_tertiary"], "fg": theme["fg_primary"]},
+            "operation": {"bg": theme["accent_primary"], "fg": "white"},
+            "equals": {"bg": theme["success"], "fg": "white"},
+            "clear": {"bg": theme["error"], "fg": "white"},
+            "function": {"bg": theme["warning"], "fg": "white"},
+            "memory": {"bg": theme["info"], "fg": "white"}
+        }
+        
+        # Create buttons
+        for button_text, row, col, colspan, color_type in buttons:
+            color = colors[color_type]
+            
+            btn = tk.Button(button_frame, text=button_text,
+                           command=lambda t=button_text: self.button_click(t),
+                           bg=color["bg"], fg=color["fg"],
+                           activebackground=color["bg"], activeforeground=color["fg"],
+                           **button_config)
+            
+            btn.grid(row=row, column=col, columnspan=colspan, padx=2, pady=2, sticky="nsew")
+            
+        # Configure grid weights
+        for i in range(8):
+            button_frame.grid_rowconfigure(i, weight=1)
+        for i in range(5):
+            button_frame.grid_columnconfigure(i, weight=1)
+            
+    def create_menu(self):
+        """Create calculator menu"""
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="History", command=self.show_history)
+        view_menu.add_command(label="Copy Result", command=self.copy_result)
+        
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self.show_about)
+        
+    def button_click(self, button_text):
+        """Handle button clicks"""
+        try:
+            if button_text.isdigit() or button_text == ".":
+                self.add_to_expression(button_text)
+            elif button_text in ["+", "-", "×", "÷", "%", "(", ")"]:
+                self.add_operator(button_text)
+            elif button_text == "=":
+                self.calculate()
+            elif button_text == "C":
+                self.clear_all()
+            elif button_text == "CE":
+                self.clear_entry()
+            elif button_text == "⌫":
+                self.backspace()
+            elif button_text == "±":
+                self.toggle_sign()
+            elif button_text in ["sin", "cos", "tan", "log", "ln", "√"]:
+                self.apply_function(button_text)
+            elif button_text == "x²":
+                self.apply_function("square")
+            elif button_text == "x^y":
+                self.add_operator("^")
+            elif button_text == "π":
+                self.add_constant("π")
+            elif button_text == "e":
+                self.add_constant("e")
+            elif button_text.startswith("M"):
+                self.memory_operation(button_text)
+                
+        except Exception as e:
+            self.show_error(str(e))
+            
+    def add_to_expression(self, text):
+        """Add text to expression"""
+        if self.expression == "0" or self.expression == "Error":
+            self.expression = text
+        else:
+            self.expression += text
+        self.update_display()
+        
+    def add_operator(self, operator):
+        """Add operator to expression"""
+        # Convert display operators to calculation operators
+        op_map = {"×": "*", "÷": "/", "^": "**"}
+        calc_op = op_map.get(operator, operator)
+        
+        if self.expression and self.expression[-1] not in "+-*/()^":
+            self.expression += calc_op
+        elif operator in ["(", ")"]:
+            self.expression += operator
+            
+        self.update_display()
+        
+    def add_constant(self, constant):
+        """Add mathematical constant"""
+        if constant == "π":
+            value = str(math.pi)
+        elif constant == "e":
+            value = str(math.e)
+            
+        if self.expression == "0" or self.expression == "Error":
+            self.expression = value
+        else:
+            self.expression += value
+            
+        self.update_display()
+        
+    def apply_function(self, function):
+        """Apply mathematical function"""
+        try:
+            if self.expression and self.expression != "Error":
+                current_value = float(eval(self.expression))
+                
+                if function == "sin":
+                    result = math.sin(math.radians(current_value))
+                elif function == "cos":
+                    result = math.cos(math.radians(current_value))
+                elif function == "tan":
+                    result = math.tan(math.radians(current_value))
+                elif function == "log":
+                    result = math.log10(current_value)
+                elif function == "ln":
+                    result = math.log(current_value)
+                elif function == "√":
+                    result = math.sqrt(current_value)
+                elif function == "square":
+                    result = current_value ** 2
+                    
+                self.expression = str(result)
+                self.result = result
+                self.update_display()
+                
+        except Exception as e:
+            self.show_error("Math Error")
+            
+    def calculate(self):
+        """Calculate expression result"""
+        try:
+            if self.expression and self.expression != "Error":
+                # Replace display operators with Python operators
+                calc_expression = self.expression.replace("×", "*").replace("÷", "/")
+                
+                # Evaluate expression
+                result = eval(calc_expression)
+                
+                # Add to history
+                self.history.append(f"{self.expression} = {result}")
+                
+                # Update display
+                self.result = result
+                self.expression = str(result)
+                self.update_display()
+                
+                # Log calculation
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "CALCULATE", 
+                                             f"Calculated: {calc_expression} = {result}")
+                    
+        except Exception as e:
+            self.show_error("Error")
+            
+    def clear_all(self):
+        """Clear all"""
+        self.expression = "0"
+        self.result = 0
+        self.update_display()
+        
+    def clear_entry(self):
+        """Clear current entry"""
+        self.expression = "0"
+        self.update_display()
+        
+    def backspace(self):
+        """Remove last character"""
+        if len(self.expression) > 1:
+            self.expression = self.expression[:-1]
+        else:
+            self.expression = "0"
+        self.update_display()
+        
+    def toggle_sign(self):
+        """Toggle sign of current number"""
+        try:
+            if self.expression and self.expression != "0" and self.expression != "Error":
+                if self.expression.startswith("-"):
+                    self.expression = self.expression[1:]
+                else:
+                    self.expression = "-" + self.expression
+                self.update_display()
+        except:
+            pass
+            
+    def memory_operation(self, operation):
+        """Handle memory operations"""
+        try:
+            if operation == "MC":  # Memory Clear
+                self.memory = 0
+            elif operation == "MR":  # Memory Recall
+                self.expression = str(self.memory)
+                self.update_display()
+            elif operation == "M+":  # Memory Add
+                if self.expression and self.expression != "Error":
+                    self.memory += float(self.expression)
+            elif operation == "M-":  # Memory Subtract
+                if self.expression and self.expression != "Error":
+                    self.memory -= float(self.expression)
+            elif operation == "MS":  # Memory Store
+                if self.expression and self.expression != "Error":
+                    self.memory = float(self.expression)
+                    
+        except Exception as e:
+            self.show_error("Memory Error")
+            
+    def update_display(self):
+        """Update calculator display"""
+        # Format expression for display
+        display_expr = self.expression.replace("*", "×").replace("/", "÷")
+        self.expression_var.set(display_expr)
+        
+        # Update result display
+        if self.expression == "Error":
+            self.result_var.set("Error")
+        else:
+            try:
+                # Try to evaluate for live preview
+                calc_expr = self.expression.replace("×", "*").replace("÷", "/")
+                preview = eval(calc_expr)
+                self.result_var.set(f"{preview:,.10g}")
+            except:
+                self.result_var.set(display_expr)
+                
+    def show_error(self, message):
+        """Show error message"""
+        self.expression = "Error"
+        self.result_var.set(message)
+        self.expression_var.set("")
+        
+    def show_history(self):
+        """Show calculation history"""
+        HistoryDialog(self.window, self.history)
+        
+    def copy_result(self):
+        """Copy result to clipboard"""
+        try:
+            self.window.clipboard_clear()
+            self.window.clipboard_append(str(self.result))
+            messagebox.showinfo("Calculator", "Result copied to clipboard")
+        except:
+            messagebox.showerror("Calculator", "Cannot copy to clipboard")
+            
+    def show_about(self):
+        """Show about dialog"""
+        about_text = """
+Calculator - Berke0S
+
+Advanced Scientific Calculator
+Version 2.0
+
+Features:
+• Basic arithmetic operations
+• Scientific functions
+• Memory operations
+• Calculation history
+• Keyboard shortcuts
+
+Created by: Berke Oruç
+        """
+        messagebox.showinfo("About Calculator", about_text.strip())
+
+class HistoryDialog:
+    """Calculator history dialog"""
+    
+    def __init__(self, parent, history):
+        self.parent = parent
+        self.history = history
+        self.create_dialog()
+        
+    def create_dialog(self):
+        """Create history dialog"""
+        self.dialog = tk.Toplevel(self.parent)
+        self.dialog.title("Calculation History")
+        self.dialog.geometry("400x300")
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.dialog.update_idletasks()
+        x = (self.dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (300 // 2)
+        self.dialog.geometry(f"400x300+{x}+{y}")
+        
+        # Get theme
+        config_manager = ConfigManager()
+        theme = config_manager.get_theme()
+        self.dialog.configure(bg=theme["bg_primary"])
+        
+        # History list
+        tk.Label(self.dialog, text="Calculation History", font=("Ubuntu", 12, "bold"),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(pady=10)
+        
+        list_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.history_listbox = tk.Listbox(list_frame, bg=theme["bg_tertiary"],
+                                         fg=theme["fg_primary"], font=("Ubuntu Mono", 10))
+        scrollbar = tk.Scrollbar(list_frame, command=self.history_listbox.yview)
+        self.history_listbox.config(yscrollcommand=scrollbar.set)
+        
+        self.history_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Populate history
+        for calculation in self.history:
+            self.history_listbox.insert(tk.END, calculation)
+            
+        # Buttons
+        button_frame = tk.Frame(self.dialog, bg=theme["bg_primary"])
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Button(button_frame, text="Clear History", command=self.clear_history,
+                 bg=theme["error"], fg="white", padx=15).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="Close", command=self.dialog.destroy,
+                 bg=theme["accent_primary"], fg="white", padx=15).pack(side=tk.RIGHT, padx=5)
+        
+    def clear_history(self):
+        """Clear calculation history"""
+        if messagebox.askyesno("Clear History", "Are you sure you want to clear the calculation history?"):
+            self.history.clear()
+            self.history_listbox.delete(0, tk.END)
+
+class ImageViewer:
+    """Advanced image viewer with editing capabilities"""
+    
+    def __init__(self, parent, image_path=None, user_info=None):
+        self.parent = parent
+        self.image_path = image_path
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        
+        self.original_image = None
+        self.current_image = None
+        self.photo = None
+        self.zoom_factor = 1.0
+        self.rotation_angle = 0
+        
+        self.create_window()
+        
+        if image_path:
+            self.load_image()
+            
+    def create_window(self):
+        """Create image viewer window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Image Viewer - Berke0S")
+        self.window.geometry("800x600")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create toolbar
+        self.create_toolbar()
+        
+        # Create image canvas
+        self.create_canvas()
+        
+        # Create status bar
+        self.create_status_bar()
+        
+    def create_menu_bar(self):
+        """Create menu bar"""
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Open", command=self.open_image)
+        file_menu.add_command(label="Save", command=self.save_image)
+        file_menu.add_command(label="Save As", command=self.save_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="Print", command=self.print_image)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.window.destroy)
+        
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label="Rotate Left", command=self.rotate_left)
+        edit_menu.add_command(label="Rotate Right", command=self.rotate_right)
+        edit_menu.add_command(label="Flip Horizontal", command=self.flip_horizontal)
+        edit_menu.add_command(label="Flip Vertical", command=self.flip_vertical)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Reset", command=self.reset_image)
+        
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Zoom In", command=self.zoom_in)
+        view_menu.add_command(label="Zoom Out", command=self.zoom_out)
+        view_menu.add_command(label="Fit to Window", command=self.fit_to_window)
+        view_menu.add_command(label="Actual Size", command=self.actual_size)
+        view_menu.add_separator()
+        view_menu.add_command(label="Fullscreen", command=self.toggle_fullscreen)
+        
+    def create_toolbar(self):
+        """Create toolbar"""
+        theme = self.config_manager.get_theme()
+        
+        toolbar = tk.Frame(self.window, bg=theme["bg_secondary"], height=40)
+        toolbar.pack(fill=tk.X)
+        toolbar.pack_propagate(False)
+        
+        # File operations
+        file_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        file_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(file_frame, text="Open", command=self.open_image,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(file_frame, text="Save", command=self.save_image,
+                 bg=theme["accent_primary"], fg="white", padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        tk.Frame(toolbar, bg=theme["border"], width=2).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        
+        # Zoom operations
+        zoom_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        zoom_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(zoom_frame, text="Zoom In", command=self.zoom_in,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(zoom_frame, text="Zoom Out", command=self.zoom_out,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(zoom_frame, text="Fit", command=self.fit_to_window,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        tk.Frame(toolbar, bg=theme["border"], width=2).pack(side=tk.LEFT, fill=tk.Y, padx=5)
+        
+        # Rotation operations
+        rotate_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        rotate_frame.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(rotate_frame, text="↺", command=self.rotate_left,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(rotate_frame, text="↻", command=self.rotate_right,
+                 bg=theme["bg_tertiary"], fg=theme["fg_primary"], padx=10).pack(side=tk.LEFT, padx=2)
+        
+        # Zoom level display
+        zoom_info_frame = tk.Frame(toolbar, bg=theme["bg_secondary"])
+        zoom_info_frame.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        tk.Label(zoom_info_frame, text="Zoom:", bg=theme["bg_secondary"],
+                fg=theme["fg_primary"]).pack(side=tk.LEFT, padx=2)
+        
+        self.zoom_var = tk.StringVar(value="100%")
+        tk.Label(zoom_info_frame, textvariable=self.zoom_var, bg=theme["bg_secondary"],
+                fg=theme["fg_primary"], font=("Ubuntu", 10, "bold")).pack(side=tk.LEFT, padx=2)
+        
+    def create_canvas(self):
+        """Create image canvas"""
+        theme = self.config_manager.get_theme()
+        
+        # Canvas frame with scrollbars
+        canvas_frame = tk.Frame(self.window, bg=theme["bg_primary"])
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create canvas with scrollbars
+        self.canvas = tk.Canvas(canvas_frame, bg=theme["bg_primary"],
+                               highlightthickness=0)
+        
+        v_scrollbar = tk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        h_scrollbar = tk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        
+        self.canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack widgets
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Bind mouse events
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
+        
+    def create_status_bar(self):
+        """Create status bar"""
+        theme = self.config_manager.get_theme()
+        
+        self.status_bar = tk.Frame(self.window, bg=theme["bg_secondary"], height=25)
+        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        self.status_bar.pack_propagate(False)
+        
+        # Status labels
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_label = tk.Label(self.status_bar, textvariable=self.status_var,
+                                    font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                    fg=theme["fg_secondary"])
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=2)
+        
+        # Image info
+        self.info_var = tk.StringVar()
+        self.info_label = tk.Label(self.status_bar, textvariable=self.info_var,
+                                  font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                  fg=theme["fg_secondary"])
+        self.info_label.pack(side=tk.RIGHT, padx=10, pady=2)
+        
+    def open_image(self):
+        """Open image file"""
+        file_path = filedialog.askopenfilename(
+            title="Open Image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.tiff"),
+                ("PNG files", "*.png"),
+                ("JPEG files", "*.jpg *.jpeg"),
+                ("GIF files", "*.gif"),
+                ("BMP files", "*.bmp"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            self.image_path = file_path
+            self.load_image()
+            
+    def load_image(self):
+        """Load image from file"""
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Error", "PIL library not available. Cannot load images.")
+            return
+            
+        try:
+            # Load original image
+            self.original_image = Image.open(self.image_path)
+            self.current_image = self.original_image.copy()
+            
+            # Reset transformations
+            self.zoom_factor = 1.0
+            self.rotation_angle = 0
+            
+            # Update display
+            self.update_image_display()
+            self.update_window_title()
+            self.update_image_info()
+            
+            self.status_var.set(f"Loaded: {os.path.basename(self.image_path)}")
+            
+            # Log image access
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "OPEN_IMAGE", 
+                                         f"Opened {self.image_path} in image viewer")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot load image: {str(e)}")
+            self.status_var.set(f"Error loading image: {str(e)}")
+            
+    def update_image_display(self):
+        """Update image display on canvas"""
+        if not self.current_image:
+            return
+            
+        try:
+            # Apply zoom
+            display_size = (
+                int(self.current_image.width * self.zoom_factor),
+                int(self.current_image.height * self.zoom_factor)
+            )
+            
+            display_image = self.current_image.resize(display_size, Image.LANCZOS)
+            
+            # Convert to PhotoImage
+            self.photo = ImageTk.PhotoImage(display_image)
+            
+            # Clear canvas and add image
+            self.canvas.delete("all")
+            self.canvas.create_image(
+                display_size[0] // 2, display_size[1] // 2,
+                image=self.photo, anchor=tk.CENTER
+            )
+            
+            # Update scroll region
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            
+            # Update zoom display
+            self.zoom_var.set(f"{int(self.zoom_factor * 100)}%")
+            
+        except Exception as e:
+            self.status_var.set(f"Display error: {str(e)}")
+            
+    def update_window_title(self):
+        """Update window title"""
+        if self.image_path:
+            filename = os.path.basename(self.image_path)
+            self.window.title(f"{filename} - Image Viewer - Berke0S")
+        else:
+            self.window.title("Image Viewer - Berke0S")
+            
+    def update_image_info(self):
+        """Update image information in status bar"""
+        if self.current_image:
+            width, height = self.current_image.size
+            mode = self.current_image.mode
+            
+            # Get file size
+            try:
+                file_size = os.path.getsize(self.image_path)
+                size_str = self.format_file_size(file_size)
+            except:
+                size_str = "Unknown"
+                
+            self.info_var.set(f"{width}×{height} {mode} {size_str}")
+        else:
+            self.info_var.set("")
+            
+    def format_file_size(self, size):
+        """Format file size"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024.0:
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return f"{size:.1f} TB"
+        
+    def zoom_in(self):
+        """Zoom in"""
+        self.zoom_factor = min(self.zoom_factor * 1.25, 10.0)
+        self.update_image_display()
+        
+    def zoom_out(self):
+        """Zoom out"""
+        self.zoom_factor = max(self.zoom_factor / 1.25, 0.1)
+        self.update_image_display()
+        
+    def fit_to_window(self):
+        """Fit image to window"""
+        if not self.current_image:
+            return
+            
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            return
+            
+        # Calculate zoom factor to fit image in window
+        zoom_x = canvas_width / self.current_image.width
+        zoom_y = canvas_height / self.current_image.height
+        
+        self.zoom_factor = min(zoom_x, zoom_y, 1.0)  # Don't zoom in beyond 100%
+        self.update_image_display()
+        
+    def actual_size(self):
+        """Show image at actual size"""
+        self.zoom_factor = 1.0
+        self.update_image_display()
+        
+    def rotate_left(self):
+        """Rotate image 90 degrees left"""
+        if not self.current_image:
+            return
+            
+        self.current_image = self.current_image.rotate(90, expand=True)
+        self.rotation_angle = (self.rotation_angle + 90) % 360
+        self.update_image_display()
+        self.update_image_info()
+        
+    def rotate_right(self):
+        """Rotate image 90 degrees right"""
+        if not self.current_image:
+            return
+            
+        self.current_image = self.current_image.rotate(-90, expand=True)
+        self.rotation_angle = (self.rotation_angle - 90) % 360
+        self.update_image_display()
+        self.update_image_info()
+        
+    def flip_horizontal(self):
+        """Flip image horizontally"""
+        if not self.current_image:
+            return
+            
+        self.current_image = self.current_image.transpose(Image.FLIP_LEFT_RIGHT)
+        self.update_image_display()
+        
+    def flip_vertical(self):
+        """Flip image vertically"""
+        if not self.current_image:
+            return
+            
+        self.current_image = self.current_image.transpose(Image.FLIP_TOP_BOTTOM)
+        self.update_image_display()
+        
+    def reset_image(self):
+        """Reset image to original"""
+        if not self.original_image:
+            return
+            
+        self.current_image = self.original_image.copy()
+        self.zoom_factor = 1.0
+        self.rotation_angle = 0
+        self.update_image_display()
+        self.update_image_info()
+        
+    def save_image(self):
+        """Save current image"""
+        if not self.current_image or not self.image_path:
+            return
+            
+        try:
+            self.current_image.save(self.image_path)
+            self.status_var.set(f"Saved: {os.path.basename(self.image_path)}")
+            
+            # Log save action
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "SAVE_IMAGE", 
+                                         f"Saved {self.image_path}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot save image: {str(e)}")
+            
+    def save_as(self):
+        """Save image with new name"""
+        if not self.current_image:
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            title="Save Image As",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG files", "*.png"),
+                ("JPEG files", "*.jpg"),
+                ("GIF files", "*.gif"),
+                ("BMP files", "*.bmp"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            try:
+                self.current_image.save(file_path)
+                self.image_path = file_path
+                self.update_window_title()
+                self.status_var.set(f"Saved as: {os.path.basename(file_path)}")
+                
+                # Log save action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "SAVE_IMAGE_AS", 
+                                             f"Saved image as {file_path}")
+                    
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot save image: {str(e)}")
+                
+    def print_image(self):
+        """Print image (placeholder)"""
+        messagebox.showinfo("Print", "Print functionality not implemented yet.")
+        
+    def toggle_fullscreen(self):
+        """Toggle fullscreen mode"""
+        current_state = self.window.attributes('-fullscreen')
+        self.window.attributes('-fullscreen', not current_state)
+        
+    def on_canvas_click(self, event):
+        """Handle canvas click"""
+        self.canvas.scan_mark(event.x, event.y)
+        
+    def on_canvas_drag(self, event):
+        """Handle canvas drag"""
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        
+    def on_mouse_wheel(self, event):
+        """Handle mouse wheel for zooming"""
+        if event.delta > 0:
+            self.zoom_in()
+        else:
+            self.zoom_out()
+
+class MusicPlayer:
+    """Music player with playlist support"""
+    
+    def __init__(self, parent, music_file=None, user_info=None):
+        self.parent = parent
+        self.music_file = music_file
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        
+        self.playlist = []
+        self.current_index = 0
+        self.is_playing = False
+        self.is_paused = False
+        self.position = 0
+        self.duration = 0
+        self.volume = 70
+        
+        self.create_window()
+        
+        if music_file:
+            self.add_to_playlist(music_file)
+            self.play_current()
+            
+    def create_window(self):
+        """Create music player window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("Music Player - Berke0S")
+        self.window.geometry("500x400")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create player controls
+        self.create_player_controls()
+        
+        # Create playlist
+        self.create_playlist()
+        
+        # Create status bar
+        self.create_status_bar()
+        
+    def create_menu_bar(self):
+        """Create menu bar"""
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Add Files", command=self.add_files)
+        file_menu.add_command(label="Add Folder", command=self.add_folder)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save Playlist", command=self.save_playlist)
+        file_menu.add_command(label="Load Playlist", command=self.load_playlist)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.window.destroy)
+        
+        # Playback menu
+        playback_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Playback", menu=playback_menu)
+        playback_menu.add_command(label="Play/Pause", command=self.toggle_playback)
+        playback_menu.add_command(label="Stop", command=self.stop)
+        playback_menu.add_command(label="Previous", command=self.previous_track)
+        playback_menu.add_command(label="Next", command=self.next_track)
+        
+        # View menu
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        view_menu.add_command(label="Shuffle", command=self.toggle_shuffle)
+        view_menu.add_command(label="Repeat", command=self.toggle_repeat)
+        
+    def create_player_controls(self):
+        """Create player control panel"""
+        theme = self.config_manager.get_theme()
+        
+        # Main control frame
+        control_frame = tk.Frame(self.window, bg=theme["bg_secondary"], height=120)
+        control_frame.pack(fill=tk.X, padx=10, pady=10)
+        control_frame.pack_propagate(False)
+        
+        # Track info
+        info_frame = tk.Frame(control_frame, bg=theme["bg_secondary"])
+        info_frame.pack(fill=tk.X, pady=5)
+        
+        self.track_var = tk.StringVar(value="No track loaded")
+        track_label = tk.Label(info_frame, textvariable=self.track_var,
+                              font=("Ubuntu", 12, "bold"), bg=theme["bg_secondary"],
+                              fg=theme["fg_primary"])
+        track_label.pack()
+        
+        self.artist_var = tk.StringVar(value="")
+        artist_label = tk.Label(info_frame, textvariable=self.artist_var,
+                               font=("Ubuntu", 10), bg=theme["bg_secondary"],
+                               fg=theme["fg_secondary"])
+        artist_label.pack()
+        
+        # Progress bar
+        progress_frame = tk.Frame(control_frame, bg=theme["bg_secondary"])
+        progress_frame.pack(fill=tk.X, pady=5)
+        
+        self.time_var = tk.StringVar(value="00:00")
+        time_label = tk.Label(progress_frame, textvariable=self.time_var,
+                             font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                             fg=theme["fg_secondary"])
+        time_label.pack(side=tk.LEFT)
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_scale = tk.Scale(progress_frame, variable=self.progress_var,
+                                      from_=0, to=100, orient=tk.HORIZONTAL,
+                                      bg=theme["bg_secondary"], fg=theme["fg_primary"],
+                                      highlightthickness=0, command=self.seek_position)
+        self.progress_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        
+        self.duration_var = tk.StringVar(value="00:00")
+        duration_label = tk.Label(progress_frame, textvariable=self.duration_var,
+                                 font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                 fg=theme["fg_secondary"])
+        duration_label.pack(side=tk.RIGHT)
+        
+        # Control buttons
+        button_frame = tk.Frame(control_frame, bg=theme["bg_secondary"])
+        button_frame.pack(pady=10)
+        
+        # Previous button
+        tk.Button(button_frame, text="⏮", font=("Ubuntu", 16),
+                 bg=theme["accent_primary"], fg="white", width=3,
+                 command=self.previous_track).pack(side=tk.LEFT, padx=5)
+        
+        # Play/Pause button
+        self.play_button_var = tk.StringVar(value="▶")
+        self.play_button = tk.Button(button_frame, textvariable=self.play_button_var,
+                                    font=("Ubuntu", 16), bg=theme["success"], fg="white",
+                                    width=3, command=self.toggle_playback)
+        self.play_button.pack(side=tk.LEFT, padx=5)
+        
+        # Stop button
+        tk.Button(button_frame, text="⏹", font=("Ubuntu", 16),
+                 bg=theme["error"], fg="white", width=3,
+                 command=self.stop).pack(side=tk.LEFT, padx=5)
+        
+        # Next button
+        tk.Button(button_frame, text="⏭", font=("Ubuntu", 16),
+                 bg=theme["accent_primary"], fg="white", width=3,
+                 command=self.next_track).pack(side=tk.LEFT, padx=5)
+        
+        # Volume control
+        volume_frame = tk.Frame(button_frame, bg=theme["bg_secondary"])
+        volume_frame.pack(side=tk.RIGHT, padx=20)
+        
+        tk.Label(volume_frame, text="🔊", font=("Ubuntu", 12),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(side=tk.LEFT)
+        
+        self.volume_var = tk.IntVar(value=self.volume)
+        volume_scale = tk.Scale(volume_frame, variable=self.volume_var,
+                               from_=0, to=100, orient=tk.HORIZONTAL,
+                               bg=theme["bg_secondary"], fg=theme["fg_primary"],
+                               highlightthickness=0, length=100,
+                               command=self.change_volume)
+        volume_scale.pack(side=tk.LEFT, padx=5)
+        
+    def create_playlist(self):
+        """Create playlist panel"""
+        theme = self.config_manager.get_theme()
+        
+        # Playlist frame
+        playlist_frame = tk.Frame(self.window, bg=theme["bg_primary"])
+        playlist_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Playlist label
+        tk.Label(playlist_frame, text="Playlist", font=("Ubuntu", 12, "bold"),
+                bg=theme["bg_primary"], fg=theme["fg_primary"]).pack(anchor=tk.W, pady=5)
+        
+        # Playlist listbox with scrollbar
+        list_frame = tk.Frame(playlist_frame, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.playlist_listbox = tk.Listbox(list_frame, bg=theme["bg_tertiary"],
+                                          fg=theme["fg_primary"], font=("Ubuntu", 10),
+                                          selectbackground=theme["accent_primary"])
+        scrollbar = tk.Scrollbar(list_frame, command=self.playlist_listbox.yview)
+        self.playlist_listbox.config(yscrollcommand=scrollbar.set)
+        
+        self.playlist_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Bind events
+        self.playlist_listbox.bind('<Double-1>', self.play_selected)
+        self.playlist_listbox.bind('<Button-3>', self.show_playlist_menu)
+        
+    def create_status_bar(self):
+        """Create status bar"""
+        theme = self.config_manager.get_theme()
+        
+        self.status_bar = tk.Frame(self.window, bg=theme["bg_secondary"], height=25)
+        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        self.status_bar.pack_propagate(False)
+        
+        # Status labels
+        self.status_var = tk.StringVar(value="Ready")
+        self.status_label = tk.Label(self.status_bar, textvariable=self.status_var,
+                                    font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                    fg=theme["fg_secondary"])
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=2)
+        
+        # Playlist info
+        self.playlist_info_var = tk.StringVar()
+        self.playlist_info_label = tk.Label(self.status_bar, textvariable=self.playlist_info_var,
+                                           font=("Ubuntu", 9), bg=theme["bg_secondary"],
+                                           fg=theme["fg_secondary"])
+        self.playlist_info_label.pack(side=tk.RIGHT, padx=10, pady=2)
+        
+    def add_files(self):
+        """Add music files to playlist"""
+        files = filedialog.askopenfilenames(
+            title="Add Music Files",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.ogg *.flac *.m4a"),
+                ("MP3 files", "*.mp3"),
+                ("WAV files", "*.wav"),
+                ("OGG files", "*.ogg"),
+                ("FLAC files", "*.flac"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        for file_path in files:
+            self.add_to_playlist(file_path)
+            
+    def add_folder(self):
+        """Add all music files from a folder"""
+        folder = filedialog.askdirectory(title="Add Music Folder")
+        if folder:
+            audio_extensions = ['.mp3', '.wav', '.ogg', '.flac', '.m4a']
+            
+            for root, dirs, files in os.walk(folder):
+                for file in files:
+                    if any(file.lower().endswith(ext) for ext in audio_extensions):
+                        file_path = os.path.join(root, file)
+                        self.add_to_playlist(file_path)
+                        
+    def add_to_playlist(self, file_path):
+        """Add single file to playlist"""
+        if file_path not in self.playlist:
+            self.playlist.append(file_path)
+            filename = os.path.basename(file_path)
+            self.playlist_listbox.insert(tk.END, filename)
+            self.update_playlist_info()
+            
+    def update_playlist_info(self):
+        """Update playlist information"""
+        count = len(self.playlist)
+        if count == 0:
+            self.playlist_info_var.set("Playlist empty")
+        else:
+            current = self.current_index + 1 if self.playlist else 0
+            self.playlist_info_var.set(f"Track {current} of {count}")
+            
+    def play_selected(self, event=None):
+        """Play selected track from playlist"""
+        selection = self.playlist_listbox.curselection()
+        if selection:
+            self.current_index = selection[0]
+            self.play_current()
+            
+    def play_current(self):
+        """Play current track"""
+        if not self.playlist or self.current_index >= len(self.playlist):
+            return
+            
+        try:
+            file_path = self.playlist[self.current_index]
+            
+            # Update track info
+            filename = os.path.basename(file_path)
+            self.track_var.set(filename)
+            
+            # Try to get metadata (simplified)
+            try:
+                # This is a placeholder - in a real implementation,
+                # you would use a library like mutagen to read metadata
+                self.artist_var.set("Unknown Artist")
+                self.duration = 180  # Placeholder duration (3 minutes)
+                self.duration_var.set(self.format_time(self.duration))
+            except:
+                self.artist_var.set("")
+                self.duration = 0
+                self.duration_var.set("00:00")
+                
+            # Highlight current track in playlist
+            self.playlist_listbox.selection_clear(0, tk.END)
+            self.playlist_listbox.selection_set(self.current_index)
+            self.playlist_listbox.see(self.current_index)
+            
+            # Start playback (placeholder - would use actual audio library)
+            self.is_playing = True
+            self.is_paused = False
+            self.position = 0
+            self.play_button_var.set("⏸")
+            
+            self.status_var.set(f"Playing: {filename}")
+            self.update_playlist_info()
+            
+            # Start position update timer
+            self.update_position()
+            
+            # Log playback
+            if self.user_info:
+                self.db_manager.log_action(self.user_info[0], "PLAY_MUSIC", 
+                                         f"Playing {file_path}")
+                
+        except Exception as e:
+            self.status_var.set(f"Error playing file: {str(e)}")
+            
+    def toggle_playback(self):
+        """Toggle play/pause"""
+        if not self.playlist:
+            return
+            
+        if self.is_playing:
+            if self.is_paused:
+                # Resume
+                self.is_paused = False
+                self.play_button_var.set("⏸")
+                self.status_var.set("Resumed")
+            else:
+                # Pause
+                self.is_paused = True
+                self.play_button_var.set("▶")
+                self.status_var.set("Paused")
+        else:
+            # Start playing
+            self.play_current()
+            
+    def stop(self):
+        """Stop playback"""
+        self.is_playing = False
+        self.is_paused = False
+        self.position = 0
+        self.play_button_var.set("▶")
+        self.progress_var.set(0)
+        self.time_var.set("00:00")
+        self.status_var.set("Stopped")
+        
+    def previous_track(self):
+        """Play previous track"""
+        if self.playlist:
+            self.current_index = (self.current_index - 1) % len(self.playlist)
+            self.play_current()
+            
+    def next_track(self):
+        """Play next track"""
+        if self.playlist:
+            self.current_index = (self.current_index + 1) % len(self.playlist)
+            self.play_current()
+            
+    def seek_position(self, value):
+        """Seek to position"""
+        if self.duration > 0:
+            self.position = int((float(value) / 100) * self.duration)
+            self.time_var.set(self.format_time(self.position))
+            
+    def change_volume(self, value):
+        """Change volume"""
+        self.volume = int(value)
+        # In a real implementation, this would change the actual audio volume
+        
+    def update_position(self):
+        """Update playback position"""
+        if self.is_playing and not self.is_paused and self.duration > 0:
+            self.position += 1
+            
+            if self.position >= self.duration:
+                # Track finished, play next
+                self.next_track()
+                return
+                
+            # Update display
+            progress = (self.position / self.duration) * 100
+            self.progress_var.set(progress)
+            self.time_var.set(self.format_time(self.position))
+            
+            # Schedule next update
+            self.window.after(1000, self.update_position)
+            
+    def format_time(self, seconds):
+        """Format time in MM:SS format"""
+        minutes = seconds // 60
+        seconds = seconds % 60
+        return f"{minutes:02d}:{seconds:02d}"
+        
+    def show_playlist_menu(self, event):
+        """Show playlist context menu"""
+        theme = self.config_manager.get_theme()
+        
+        menu = tk.Menu(self.window, tearoff=0,
+                      bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        
+        selection = self.playlist_listbox.curselection()
+        
+        if selection:
+            menu.add_command(label="Play", command=self.play_selected)
+            menu.add_separator()
+            menu.add_command(label="Remove from Playlist", command=self.remove_from_playlist)
+            menu.add_command(label="Show in File Manager", command=self.show_in_file_manager)
+        else:
+            menu.add_command(label="Add Files", command=self.add_files)
+            menu.add_command(label="Add Folder", command=self.add_folder)
+            menu.add_separator()
+            menu.add_command(label="Clear Playlist", command=self.clear_playlist)
+            
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+            
+    def remove_from_playlist(self):
+        """Remove selected track from playlist"""
+        selection = self.playlist_listbox.curselection()
+        if selection:
+            index = selection[0]
+            
+            # Remove from playlist
+            del self.playlist[index]
+            self.playlist_listbox.delete(index)
+            
+            # Adjust current index if necessary
+            if index <= self.current_index and self.current_index > 0:
+                self.current_index -= 1
+                
+            self.update_playlist_info()
+            
+    def show_in_file_manager(self):
+        """Show selected file in file manager"""
+        selection = self.playlist_listbox.curselection()
+        if selection:
+            file_path = self.playlist[selection[0]]
+            folder_path = os.path.dirname(file_path)
+            
+            # Open file manager at folder location
+            FileManager(self.parent, self.user_info).navigate_to(folder_path)
+            
+    def clear_playlist(self):
+        """Clear entire playlist"""
+        if messagebox.askyesno("Clear Playlist", "Are you sure you want to clear the entire playlist?"):
+            self.playlist.clear()
+            self.playlist_listbox.delete(0, tk.END)
+            self.current_index = 0
+            self.stop()
+            self.update_playlist_info()
+            
+    def save_playlist(self):
+        """Save playlist to file"""
+        if not self.playlist:
+            messagebox.showwarning("Save Playlist", "Playlist is empty.")
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            title="Save Playlist",
+            defaultextension=".m3u",
+            filetypes=[
+                ("M3U Playlist", "*.m3u"),
+                ("Text files", "*.txt"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write("#EXTM3U\n")
+                    for track in self.playlist:
+                        f.write(f"{track}\n")
+                        
+                self.status_var.set(f"Playlist saved: {os.path.basename(file_path)}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot save playlist: {str(e)}")
+                
+    def load_playlist(self):
+        """Load playlist from file"""
+        file_path = filedialog.askopenfilename(
+            title="Load Playlist",
+            filetypes=[
+                ("M3U Playlist", "*.m3u"),
+                ("Text files", "*.txt"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    
+                # Clear current playlist
+                self.clear_playlist()
+                
+                # Load tracks
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#') and os.path.exists(line):
+                        self.add_to_playlist(line)
+                        
+                self.status_var.set(f"Playlist loaded: {os.path.basename(file_path)}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot load playlist: {str(e)}")
+                
+    def toggle_shuffle(self):
+        """Toggle shuffle mode (placeholder)"""
+        messagebox.showinfo("Shuffle", "Shuffle mode not implemented yet.")
+        
+    def toggle_repeat(self):
+        """Toggle repeat mode (placeholder)"""
+        messagebox.showinfo("Repeat", "Repeat mode not implemented yet.")
+
+class VideoPlayer:
+    """Video player using external player"""
+    
+    def __init__(self, parent, video_file=None, user_info=None):
+        self.parent = parent
+        self.video_file = video_file
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        
+        if video_file:
+            self.play_video(video_file)
+            
+    def play_video(self, video_file):
+        """Play video using external player"""
+        try:
+            # Try different video players
+            players = ['vlc', 'mpv', 'mplayer', 'totem']
+            
+            for player in players:
+                try:
+                    subprocess.run(['which', player], check=True, capture_output=True)
+                    subprocess.Popen([player, video_file])
+                    
+                    # Log video playback
+                    if self.user_info:
+                        self.db_manager.log_action(self.user_info[0], "PLAY_VIDEO", 
+                                                 f"Playing {video_file} with {player}")
+                    return
+                except subprocess.CalledProcessError:
+                    continue
+                    
+            # No video player found
+            messagebox.showerror("Error", 
+                               "No video player found. Please install VLC, MPV, or MPlayer.")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot play video: {str(e)}")
+
+class SystemMonitor:
+    """System monitoring and performance tools"""
+    
+    def __init__(self, parent, user_info=None):
+        self.parent = parent
+        self.user_info = user_info
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        
+        self.monitoring = False
+        self.update_interval = 1000  # 1 second
+        
+        self.create_window()
+        self.start_monitoring()
+        
+    def create_window(self):
+        """Create system monitor window"""
+        self.window = tk.Toplevel(self.parent)
+        self.window.title("System Monitor - Berke0S")
+        self.window.geometry("700x500")
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.window.configure(bg=theme["bg_primary"])
+        
+        # Create notebook for different tabs
+        self.notebook = ttk.Notebook(self.window)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create tabs
+        self.create_overview_tab()
+        self.create_processes_tab()
+        self.create_network_tab()
+        self.create_disk_tab()
+        
+        # Bind window close event
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+    def create_overview_tab(self):
+        """Create system overview tab"""
+        theme = self.config_manager.get_theme()
+        
+        overview_frame = tk.Frame(self.notebook, bg=theme["bg_primary"])
+        self.notebook.add(overview_frame, text="Overview")
+        
+        # CPU section
+        cpu_frame = tk.LabelFrame(overview_frame, text="CPU", font=("Ubuntu", 12, "bold"),
+                                 bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        cpu_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.cpu_var = tk.StringVar(value="CPU Usage: 0%")
+        tk.Label(cpu_frame, textvariable=self.cpu_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        self.cpu_progress = ttk.Progressbar(cpu_frame, length=300, mode='determinate')
+        self.cpu_progress.pack(pady=5)
+        
+        # Memory section
+        memory_frame = tk.LabelFrame(overview_frame, text="Memory", font=("Ubuntu", 12, "bold"),
+                                    bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        memory_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.memory_var = tk.StringVar(value="Memory Usage: 0%")
+        tk.Label(memory_frame, textvariable=self.memory_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        self.memory_progress = ttk.Progressbar(memory_frame, length=300, mode='determinate')
+        self.memory_progress.pack(pady=5)
+        
+        # Disk section
+        disk_frame = tk.LabelFrame(overview_frame, text="Disk", font=("Ubuntu", 12, "bold"),
+                                  bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        disk_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.disk_var = tk.StringVar(value="Disk Usage: 0%")
+        tk.Label(disk_frame, textvariable=self.disk_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        self.disk_progress = ttk.Progressbar(disk_frame, length=300, mode='determinate')
+        self.disk_progress.pack(pady=5)
+        
+        # Network section
+        network_frame = tk.LabelFrame(overview_frame, text="Network", font=("Ubuntu", 12, "bold"),
+                                     bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        
+        network_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.network_var = tk.StringVar(value="Network: Disconnected")
+        tk.Label(network_frame, textvariable=self.network_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"]).pack(pady=5)
+        
+        # System info section
+        info_frame = tk.LabelFrame(overview_frame, text="System Information", 
+                                  font=("Ubuntu", 12, "bold"),
+                                  bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        info_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.info_text = tk.Text(info_frame, height=8, bg=theme["bg_tertiary"],
+                                fg=theme["fg_primary"], font=("Ubuntu Mono", 10))
+        self.info_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.update_system_info()
+        
+    def create_processes_tab(self):
+        """Create processes tab"""
+        theme = self.config_manager.get_theme()
+        
+        processes_frame = tk.Frame(self.notebook, bg=theme["bg_primary"])
+        self.notebook.add(processes_frame, text="Processes")
+        
+        # Toolbar
+        toolbar = tk.Frame(processes_frame, bg=theme["bg_secondary"])
+        toolbar.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Button(toolbar, text="Refresh", command=self.update_processes,
+                 bg=theme["accent_primary"], fg="white", padx=15).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(toolbar, text="Kill Process", command=self.kill_process,
+                 bg=theme["error"], fg="white", padx=15).pack(side=tk.LEFT, padx=5)
+        
+        # Process list
+        list_frame = tk.Frame(processes_frame, bg=theme["bg_primary"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create treeview for processes
+        columns = ('PID', 'Name', 'CPU%', 'Memory%', 'Status')
+        self.process_tree = ttk.Treeview(list_frame, columns=columns, show='headings')
+        
+        # Configure columns
+        for col in columns:
+            self.process_tree.heading(col, text=col)
+            if col == 'PID':
+                self.process_tree.column(col, width=80, minwidth=60)
+            elif col == 'Name':
+                self.process_tree.column(col, width=200, minwidth=150)
+            elif col in ['CPU%', 'Memory%']:
+                self.process_tree.column(col, width=80, minwidth=60)
+            elif col == 'Status':
+                self.process_tree.column(col, width=100, minwidth=80)
+                
+        # Scrollbars
+        v_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.process_tree.yview)
+        h_scrollbar = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.process_tree.xview)
+        
+        self.process_tree.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Pack widgets
+        self.process_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+    def create_network_tab(self):
+        """Create network monitoring tab"""
+        theme = self.config_manager.get_theme()
+        
+        network_frame = tk.Frame(self.notebook, bg=theme["bg_primary"])
+        self.notebook.add(network_frame, text="Network")
+        
+        # Network interfaces
+        interfaces_frame = tk.LabelFrame(network_frame, text="Network Interfaces",
+                                        font=("Ubuntu", 12, "bold"),
+                                        bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        interfaces_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.interfaces_text = tk.Text(interfaces_frame, height=8, bg=theme["bg_tertiary"],
+                                      fg=theme["fg_primary"], font=("Ubuntu Mono", 10))
+        self.interfaces_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Network statistics
+        stats_frame = tk.LabelFrame(network_frame, text="Network Statistics",
+                                   font=("Ubuntu", 12, "bold"),
+                                   bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        stats_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.network_stats_var = tk.StringVar()
+        tk.Label(stats_frame, textvariable=self.network_stats_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"], justify=tk.LEFT).pack(pady=5)
+        
+    def create_disk_tab(self):
+        """Create disk monitoring tab"""
+        theme = self.config_manager.get_theme()
+        
+        disk_frame = tk.Frame(self.notebook, bg=theme["bg_primary"])
+        self.notebook.add(disk_frame, text="Disk")
+        
+        # Disk usage
+        usage_frame = tk.LabelFrame(disk_frame, text="Disk Usage",
+                                   font=("Ubuntu", 12, "bold"),
+                                   bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        usage_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.disk_usage_text = tk.Text(usage_frame, height=6, bg=theme["bg_tertiary"],
+                                      fg=theme["fg_primary"], font=("Ubuntu Mono", 10))
+        self.disk_usage_text.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Disk I/O
+        io_frame = tk.LabelFrame(disk_frame, text="Disk I/O",
+                                font=("Ubuntu", 12, "bold"),
+                                bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        io_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.disk_io_var = tk.StringVar()
+        tk.Label(io_frame, textvariable=self.disk_io_var, font=("Ubuntu", 11),
+                bg=theme["bg_secondary"], fg=theme["fg_primary"], justify=tk.LEFT).pack(pady=5)
+        
+    def start_monitoring(self):
+        """Start system monitoring"""
+        self.monitoring = True
+        self.update_system_stats()
+        
+    def stop_monitoring(self):
+        """Stop system monitoring"""
+        self.monitoring = False
+        
+    def update_system_stats(self):
+        """Update system statistics"""
+        if not self.monitoring:
+            return
+            
+        try:
+            # CPU usage
+            cpu_percent = psutil.cpu_percent(interval=None)
+            self.cpu_var.set(f"CPU Usage: {cpu_percent:.1f}%")
+            self.cpu_progress['value'] = cpu_percent
+            
+            # Memory usage
+            memory = psutil.virtual_memory()
+            memory_percent = memory.percent
+            memory_used = memory.used // (1024**3)  # GB
+            memory_total = memory.total // (1024**3)  # GB
+            self.memory_var.set(f"Memory Usage: {memory_percent:.1f}% ({memory_used}GB / {memory_total}GB)")
+            self.memory_progress['value'] = memory_percent
+            
+            # Disk usage
+            disk = psutil.disk_usage('/')
+            disk_percent = (disk.used / disk.total) * 100
+            disk_used = disk.used // (1024**3)  # GB
+            disk_total = disk.total // (1024**3)  # GB
+            self.disk_var.set(f"Disk Usage: {disk_percent:.1f}% ({disk_used}GB / {disk_total}GB)")
+            self.disk_progress['value'] = disk_percent
+            
+            # Network status
+            try:
+                # Check if connected to internet
+                socket.create_connection(("8.8.8.8", 53), timeout=3)
+                self.network_var.set("Network: Connected")
+            except OSError:
+                self.network_var.set("Network: Disconnected")
+                
+            # Update other tabs if they're visible
+            current_tab = self.notebook.index(self.notebook.select())
+            if current_tab == 1:  # Processes tab
+                self.update_processes()
+            elif current_tab == 2:  # Network tab
+                self.update_network_info()
+            elif current_tab == 3:  # Disk tab
+                self.update_disk_info()
+                
+        except Exception as e:
+            logging.error(f"System monitor update error: {e}")
+            
+        # Schedule next update
+        if self.monitoring:
+            self.window.after(self.update_interval, self.update_system_stats)
+            
+    def update_system_info(self):
+        """Update system information"""
+        try:
+            info_lines = []
+            
+            # System info
+            uname = os.uname()
+            info_lines.append(f"System: {uname.sysname} {uname.release}")
+            info_lines.append(f"Machine: {uname.machine}")
+            info_lines.append(f"Hostname: {socket.gethostname()}")
+            
+            # CPU info
+            cpu_count = psutil.cpu_count()
+            cpu_freq = psutil.cpu_freq()
+            info_lines.append(f"CPU Cores: {cpu_count}")
+            if cpu_freq:
+                info_lines.append(f"CPU Frequency: {cpu_freq.current:.0f} MHz")
+                
+            # Boot time
+            boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+            info_lines.append(f"Boot Time: {boot_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Uptime
+            uptime = datetime.datetime.now() - boot_time
+            days = uptime.days
+            hours, remainder = divmod(uptime.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            info_lines.append(f"Uptime: {days}d {hours}h {minutes}m")
+            
+            # Update text widget
+            self.info_text.delete(1.0, tk.END)
+            self.info_text.insert(tk.END, '\n'.join(info_lines))
+            
+        except Exception as e:
+            self.info_text.delete(1.0, tk.END)
+            self.info_text.insert(tk.END, f"Error getting system info: {str(e)}")
+            
+    def update_processes(self):
+        """Update process list"""
+        try:
+            # Clear existing items
+            for item in self.process_tree.get_children():
+                self.process_tree.delete(item)
+                
+            # Get processes
+            processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'status']):
+                try:
+                    processes.append(proc.info)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                    
+            # Sort by CPU usage
+            processes.sort(key=lambda x: x['cpu_percent'] or 0, reverse=True)
+            
+            # Add to treeview (top 50 processes)
+            for proc in processes[:50]:
+                self.process_tree.insert('', tk.END, values=(
+                    proc['pid'],
+                    proc['name'] or 'Unknown',
+                    f"{proc['cpu_percent'] or 0:.1f}",
+                    f"{proc['memory_percent'] or 0:.1f}",
+                    proc['status'] or 'Unknown'
+                ))
+                
+        except Exception as e:
+            logging.error(f"Process update error: {e}")
+            
+    def update_network_info(self):
+        """Update network information"""
+        try:
+            # Network interfaces
+            interfaces_info = []
+            interfaces = psutil.net_if_addrs()
+            
+            for interface, addrs in interfaces.items():
+                interfaces_info.append(f"{interface}:")
+                for addr in addrs:
+                    if addr.family == socket.AF_INET:
+                        interfaces_info.append(f"  IPv4: {addr.address}")
+                    elif addr.family == socket.AF_INET6:
+                        interfaces_info.append(f"  IPv6: {addr.address}")
+                interfaces_info.append("")
+                
+            self.interfaces_text.delete(1.0, tk.END)
+            self.interfaces_text.insert(tk.END, '\n'.join(interfaces_info))
+            
+            # Network statistics
+            net_io = psutil.net_io_counters()
+            stats = [
+                f"Bytes Sent: {self.format_bytes(net_io.bytes_sent)}",
+                f"Bytes Received: {self.format_bytes(net_io.bytes_recv)}",
+                f"Packets Sent: {net_io.packets_sent:,}",
+                f"Packets Received: {net_io.packets_recv:,}",
+                f"Errors In: {net_io.errin}",
+                f"Errors Out: {net_io.errout}",
+                f"Drops In: {net_io.dropin}",
+                f"Drops Out: {net_io.dropout}"
+            ]
+            
+            self.network_stats_var.set('\n'.join(stats))
+            
+        except Exception as e:
+            self.interfaces_text.delete(1.0, tk.END)
+            self.interfaces_text.insert(tk.END, f"Error getting network info: {str(e)}")
+            
+    def update_disk_info(self):
+        """Update disk information"""
+        try:
+            # Disk usage
+            usage_info = []
+            partitions = psutil.disk_partitions()
+            
+            for partition in partitions:
+                try:
+                    usage = psutil.disk_usage(partition.mountpoint)
+                    total_gb = usage.total // (1024**3)
+                    used_gb = usage.used // (1024**3)
+                    free_gb = usage.free // (1024**3)
+                    percent = (usage.used / usage.total) * 100
+                    
+                    usage_info.append(f"{partition.device} ({partition.fstype})")
+                    usage_info.append(f"  Mountpoint: {partition.mountpoint}")
+                    usage_info.append(f"  Total: {total_gb} GB")
+                    usage_info.append(f"  Used: {used_gb} GB ({percent:.1f}%)")
+                    usage_info.append(f"  Free: {free_gb} GB")
+                    usage_info.append("")
+                except PermissionError:
+                    usage_info.append(f"{partition.device}: Permission denied")
+                    usage_info.append("")
+                    
+            self.disk_usage_text.delete(1.0, tk.END)
+            self.disk_usage_text.insert(tk.END, '\n'.join(usage_info))
+            
+            # Disk I/O
+            disk_io = psutil.disk_io_counters()
+            if disk_io:
+                io_stats = [
+                    f"Read Count: {disk_io.read_count:,}",
+                    f"Write Count: {disk_io.write_count:,}",
+                    f"Read Bytes: {self.format_bytes(disk_io.read_bytes)}",
+                    f"Write Bytes: {self.format_bytes(disk_io.write_bytes)}",
+                    f"Read Time: {disk_io.read_time:,} ms",
+                    f"Write Time: {disk_io.write_time:,} ms"
+                ]
+                
+                self.disk_io_var.set('\n'.join(io_stats))
+            else:
+                self.disk_io_var.set("Disk I/O information not available")
+                
+        except Exception as e:
+            self.disk_usage_text.delete(1.0, tk.END)
+            self.disk_usage_text.insert(tk.END, f"Error getting disk info: {str(e)}")
+            
+    def format_bytes(self, bytes_value):
+        """Format bytes to human readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_value < 1024.0:
+                return f"{bytes_value:.1f} {unit}"
+            bytes_value /= 1024.0
+        return f"{bytes_value:.1f} PB"
+        
+    def kill_process(self):
+        """Kill selected process"""
+        selection = self.process_tree.selection()
+        if not selection:
+            messagebox.showwarning("Kill Process", "Please select a process to kill.")
+            return
+            
+        item = self.process_tree.item(selection[0])
+        pid = int(item['values'][0])
+        process_name = item['values'][1]
+        
+        if messagebox.askyesno("Kill Process", 
+                              f"Are you sure you want to kill process '{process_name}' (PID: {pid})?"):
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                
+                # Wait for process to terminate
+                try:
+                    process.wait(timeout=3)
+                except psutil.TimeoutExpired:
+                    # Force kill if it doesn't terminate
+                    process.kill()
+                    
+                messagebox.showinfo("Kill Process", f"Process {process_name} (PID: {pid}) terminated.")
+                
+                # Log action
+                if self.user_info:
+                    self.db_manager.log_action(self.user_info[0], "KILL_PROCESS", 
+                                             f"Killed process {process_name} (PID: {pid})")
+                    
+                # Refresh process list
+                self.update_processes()
+                
+            except psutil.NoSuchProcess:
+                messagebox.showwarning("Kill Process", "Process no longer exists.")
+            except psutil.AccessDenied:
+                messagebox.showerror("Kill Process", "Access denied. Cannot kill this process.")
+            except Exception as e:
+                messagebox.showerror("Kill Process", f"Error killing process: {str(e)}")
+                
+    def on_closing(self):
+        """Handle window closing"""
+        self.stop_monitoring()
+        self.window.destroy()
+
+class DesktopEnvironment:
+    """Main desktop environment class"""
+    
+    def __init__(self):
+        self.config_manager = ConfigManager()
+        self.db_manager = DatabaseManager()
+        self.lang_manager = LanguageManager()
+        self.sound_manager = SoundManager()
+        
+        self.current_user = None
+        self.applications = {}
+        self.windows = []
+        self.desktop_icons = []
+        
+        # Check if first run
+        if self.config_manager.get("first_run", True):
+            self.run_installation()
+        else:
+            self.start_desktop()
+            
+    def run_installation(self):
+        """Run installation wizard"""
+        if GUI_AVAILABLE:
+            root = tk.Tk()
+            root.withdraw()  # Hide main window
+            
+            installer = InstallationWizard(root)
+            root.mainloop()
+            
+            # After installation, start desktop
+            self.start_desktop()
+        else:
+            # Console installation
+            installer = InstallationWizard()
+            self.start_desktop()
+            
+    def start_desktop(self):
+        """Start desktop environment"""
+        if not GUI_AVAILABLE:
+            # Start console mode
+            console = ConsoleMode()
+            console.start()
+            return
+            
+        # Initialize GUI desktop
+        self.root = tk.Tk()
+        self.root.title("Berke0S Desktop")
+        self.root.attributes('-fullscreen', True)
+        
+        # Get theme
+        theme = self.config_manager.get_theme()
+        self.root.configure(bg=theme["bg_primary"])
+        
+        # Initialize managers
+        self.notification_manager = NotificationManager(self.root)
+        
+        # Show login screen
+        self.show_login()
+        
+        # Play startup sound
+        self.sound_manager.play_startup_sound()
+        
+        # Start main loop
+        self.root.mainloop()
+        
+    def show_login(self):
+        """Show login screen"""
+        login_manager = LoginManager(self.root)
+        
+        # Wait for login completion
+        self.root.wait_window(login_manager.window)
+        
+        if login_manager.is_logged_in():
+            self.current_user = login_manager.get_current_user()
+            self.setup_desktop()
+        else:
+            self.root.quit()
+            
+    def setup_desktop(self):
+        """Setup desktop after login"""
+        theme = self.config_manager.get_theme()
+        
+        # Create desktop canvas
+        self.desktop_canvas = tk.Canvas(self.root, bg=theme["bg_primary"],
+                                       highlightthickness=0)
+        self.desktop_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Create taskbar
+        self.create_taskbar()
+        
+        # Load desktop icons
         self.load_desktop_icons()
         
-        # Taskbar
-        self.taskbar = tk.Frame(self.root, bg='rgba(0,0,0,0.6)', height=32)
-        self.taskbar.pack(side=tk.BOTTOM, fill=tk.X)
+        # Initialize applications
+        self.initialize_applications()
         
-        # Taskbar elements
-        self.start_btn = tk.Label(self.taskbar, text="☰", fg="white", bg="rgba(0,0,0,0.6)", 
-                                font=("Arial", 14), cursor="hand2")
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        self.taskbar_windows = tk.Frame(self.taskbar, bg="rgba(0,0,0,0.6)")
-        self.taskbar_windows.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.clock = tk.Label(self.taskbar, fg="white", bg="rgba(0,0,0,0.6)", font=("Arial", 12))
-        self.clock.pack(side=tk.LEFT, padx=10)
+        # Show welcome notification
+        self.notification_manager.show("Welcome", 
+                                     f"Welcome to Berke0S, {self.current_user[1]}!",
+                                     "success")
+        
+        # Bind events
+        self.bind_events()
+        
+    def create_taskbar(self):
+        """Create desktop taskbar"""
+        theme = self.config_manager.get_theme()
+        position = self.config_manager.get("taskbar_position", "bottom")
+        
+        # Taskbar frame
+        self.taskbar = tk.Frame(self.root, bg=theme["bg_secondary"], height=40)
+        
+        if position == "bottom":
+            self.taskbar.pack(side=tk.BOTTOM, fill=tk.X)
+        elif position == "top":
+            self.taskbar.pack(side=tk.TOP, fill=tk.X)
+        elif position == "left":
+            self.taskbar.configure(width=200, height=0)
+            self.taskbar.pack(side=tk.LEFT, fill=tk.Y)
+        elif position == "right":
+            self.taskbar.configure(width=200, height=0)
+            self.taskbar.pack(side=tk.RIGHT, fill=tk.Y)
+            
+        self.taskbar.pack_propagate(False)
+        
+        # Start menu button
+        self.start_button = tk.Button(self.taskbar, text="☰ Start",
+                                     font=("Ubuntu", 12), bg=theme["accent_primary"],
+                                     fg="white", command=self.show_start_menu)
+        self.start_button.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Window buttons area
+        self.window_buttons_frame = tk.Frame(self.taskbar, bg=theme["bg_secondary"])
+        self.window_buttons_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        
+        # System tray
+        self.system_tray = tk.Frame(self.taskbar, bg=theme["bg_secondary"])
+        self.system_tray.pack(side=tk.RIGHT, padx=5, pady=5)
+        
+        # Clock
+        self.clock_label = tk.Label(self.system_tray, font=("Ubuntu", 10),
+                                   bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        self.clock_label.pack(side=tk.RIGHT, padx=5)
+        
+        # System indicators
+        self.create_system_indicators()
+        
+        # Update clock
         self.update_clock()
         
-        # Widgets
-        self.widgets = tk.Frame(self.taskbar, bg="rgba(0,0,0,0.6)")
-        self.widgets.pack(side=tk.RIGHT)
-        self.battery_label = tk.Label(self.widgets, bg="rgba(0,0,0,0.6)")
-        self.battery_label.pack(side=tk.RIGHT, padx=2)
-        self.wifi_label = tk.Label(self.widgets, bg="rgba(0,0,0,0.6)")
-        self.wifi_label.pack(side=tk.RIGHT, padx=2)
-        self.volume_label = tk.Label(self.widgets, bg="rgba(0,0,0,0.6)")
-        self.volume_label.pack(side=tk.RIGHT, padx=2)
-        self.bluetooth_label = tk.Label(self.widgets, bg="rgba(0,0,0,0.6)")
-        self.bluetooth_label.pack(side=tk.RIGHT, padx=2)
+    def create_system_indicators(self):
+        """Create system status indicators"""
+        theme = self.config_manager.get_theme()
         
-        # Bindings
-        self.desktop.bind("<Button-3>", self.show_desktop_menu)
+        # Network indicator
+        self.network_indicator = tk.Label(self.system_tray, text="📶",
+                                         font=("Ubuntu", 12), bg=theme["bg_secondary"],
+                                         fg=theme["fg_primary"])
+        self.network_indicator.pack(side=tk.RIGHT, padx=2)
         
-        # Power management
-        self.last_activity = time.time()
-        self.root.bind("<Any-KeyPress>", self.reset_activity)
-        self.root.bind("<Any-Motion>", self.reset_activity)
-        self.check_power_state()
-        
-        # Update widgets
-        self.update_widgets()
-
-    def reset_activity(self, event):
-        self.last_activity = time.time()
-
-    def check_power_state(self):
-        current_time = time.time()
-        if current_time - self.last_activity > self.config["power"]["screen_off_timeout"]:
-            self.screen_off()
-        elif current_time - self.last_activity > self.config["power"]["sleep_timeout"]:
-            self.suspend()
-        self.root.after(60000, self.check_power_state)
-
-    def screen_off(self):
-        try:
-            subprocess.run(["xset", "dpms", "force", "off"], check=True)
-        except Exception as e:
-            logging.warning(f"Screen off error: {e}")
-
-    def suspend(self):
-        try:
-            subprocess.run(["sudo", "pm-suspend"], check=True)
-        except Exception as e:
-            logging.warning(f"Suspend error: {e}")
-
-    def update_clock(self):
-        try:
-            self.clock.config(text=datetime.datetime.now().strftime("%H:%M:%S %d/%m/%Y"))
-            self.root.after(1000, self.update_clock)
-        except Exception as e:
-            logging.warning(f"Clock update error: {e}")
-
-    def update_widgets(self):
-        # Battery
+        # Battery indicator (if available)
         try:
             battery = psutil.sensors_battery()
             if battery:
-                percent = int(battery.percent)
-                fill_width = (percent / 100) * 12
-                svg = BATTERY_ICON.format(fill_width=fill_width)
-                self.battery_label.config(image=self.svg_to_photo(svg))
-        except Exception as e:
-            logging.warning(f"Battery widget error: {e}")
-
-        # WiFi
-        try:
-            output = subprocess.check_output(["iwconfig"], text=True, stderr=subprocess.DEVNULL)
-            strength = re.search(r"Signal level=(-?\d+)", output)
-            if strength:
-                level = int(strength.group(1))
-                color = "#fff" if level > -70 else "#888"
-                self.wifi_label.config(image=self.svg_to_photo(WIFI_ICON.replace("#fff", color)))
-        except Exception as e:
-            logging.warning(f"WiFi widget error: {e}")
-
-        # Volume
-        try:
-            output = subprocess.check_output(["amixer", "get", "Master"], text=True)
-            volume = re.search(r"\[(\d+)%\]", output)
-            if volume:
-                vol = int(volume.group(1))
-                color = "#fff" if vol > 0 else "#888"
-                self.volume_label.config(image=self.svg_to_photo(VOLUME_ICON.replace("#fff", color)))
-        except Exception as e:
-            logging.warning(f"Volume widget error: {e}")
-
-        # Bluetooth
-        try:
-            output = subprocess.check_output(["bluetoothctl", "show"], text=True)
-            powered = "Powered: yes" in output
-            color = "#fff" if powered else "#888"
-            self.bluetooth_label.config(image=self.svg_to_photo(BLUETOOTH_ICON.replace("#fff", color)))
-        except Exception as e:
-            logging.warning(f"Bluetooth widget error: {e}")
-
-        self.root.after(5000, self.update_widgets)
-
-    def svg_to_photo(self, svg):
-        try:
-            img = Image.open(BytesIO(svg.encode())).convert("RGBA")
-            img = img.resize((20, 20), Image.LANCZOS)
-            return ImageTk.PhotoImage(img)
-        except Exception as e:
-            logging.error(f"SVG render error: {e}")
-            img = Image.new("RGBA", (20, 20), (255, 255, 255, 0))
-            return ImageTk.PhotoImage(img)
-
+                self.battery_indicator = tk.Label(self.system_tray, text="🔋",
+                                                 font=("Ubuntu", 12), bg=theme["bg_secondary"],
+                                                 fg=theme["fg_primary"])
+                self.battery_indicator.pack(side=tk.RIGHT, padx=2)
+        except:
+            pass
+            
+        # Volume indicator
+        self.volume_indicator = tk.Label(self.system_tray, text="🔊",
+                                        font=("Ubuntu", 12), bg=theme["bg_secondary"],
+                                        fg=theme["fg_primary"])
+        self.volume_indicator.pack(side=tk.RIGHT, padx=2)
+        
+    def update_clock(self):
+        """Update taskbar clock"""
+        current_time = datetime.datetime.now().strftime("%H:%M:%S\n%Y-%m-%d")
+        self.clock_label.config(text=current_time)
+        self.root.after(1000, self.update_clock)
+        
     def load_desktop_icons(self):
-        session = load_session()
-        for icon in session["desktop_icons"]:
-            self.add_desktop_icon(icon["path"], icon["x"], icon["y"])
-
-    def add_desktop_icon(self, path, x, y):
-        icon_id = str(uuid.uuid4())
-        icon_type = FOLDER_ICON if os.path.isdir(path) else FILE_ICON
-        icon_img = self.svg_to_photo(icon_type)
+        """Load desktop icons"""
+        # Default desktop icons
+        default_icons = [
+            {"name": "File Manager", "x": 50, "y": 50, "app": "file_manager"},
+            {"name": "Text Editor", "x": 50, "y": 150, "app": "text_editor"},
+            {"name": "Calculator", "x": 50, "y": 250, "app": "calculator"},
+            {"name": "System Monitor", "x": 50, "y": 350, "app": "system_monitor"}
+        ]
         
-        name = os.path.basename(path)
-        icon = self.desktop.create_image(x, y, image=icon_img, anchor=tk.NW)
-        text = self.desktop.create_text(x + 24, y + 56, text=name, fill="white", 
-                                      font=("Arial", 11), anchor=tk.N)
+        theme = self.config_manager.get_theme()
         
-        self.desktop_icons[icon_id] = {
-            "path": path,
-            "icon": icon,
-            "text": text,
-            "image": icon_img
+        for icon_info in default_icons:
+            # Create icon
+            icon_frame = tk.Frame(self.desktop_canvas, bg=theme["bg_primary"])
+            
+            # Icon image (placeholder)
+            icon_label = tk.Label(icon_frame, text="📁", font=("Ubuntu", 32),
+                                 bg=theme["bg_primary"], fg=theme["fg_primary"])
+            icon_label.pack()
+            
+            # Icon text
+            text_label = tk.Label(icon_frame, text=icon_info["name"],
+                                 font=("Ubuntu", 10), bg=theme["bg_primary"],
+                                 fg=theme["fg_primary"])
+            text_label.pack()
+            
+            # Place icon on desktop
+            self.desktop_canvas.create_window(icon_info["x"], icon_info["y"],
+                                            window=icon_frame, anchor=tk.NW)
+            
+            # Bind double-click event
+            app_name = icon_info["app"]
+            icon_frame.bind("<Double-Button-1>", lambda e, app=app_name: self.launch_application(app))
+            icon_label.bind("<Double-Button-1>", lambda e, app=app_name: self.launch_application(app))
+            text_label.bind("<Double-Button-1>", lambda e, app=app_name: self.launch_application(app))
+            
+            self.desktop_icons.append({
+                "frame": icon_frame,
+                "app": app_name,
+                "x": icon_info["x"],
+                "y": icon_info["y"]
+            })
+            
+    def initialize_applications(self):
+        """Initialize available applications"""
+        self.applications = {
+            "file_manager": lambda: FileManager(self.root, self.current_user),
+            "text_editor": lambda: TextEditor(self.root, None, self.current_user),
+            "calculator": lambda: Calculator(self.root, self.current_user),
+            "image_viewer": lambda: ImageViewer(self.root, None, self.current_user),
+            "music_player": lambda: MusicPlayer(self.root, None, self.current_user),
+            "system_monitor": lambda: SystemMonitor(self.root, self.current_user)
         }
         
-        self.desktop.tag_bind(icon, "<Button-1>", lambda e: self.handle_icon_click(icon_id))
-        self.desktop.tag_bind(icon, "<Button-3>", lambda e: self.show_icon_menu(e, icon_id))
-        self.desktop.tag_bind(icon, "<B1-Motion>", lambda e: self.drag_icon(e, icon_id))
+    def launch_application(self, app_name):
+        """Launch application"""
+        if app_name in self.applications:
+            try:
+                app = self.applications[app_name]()
+                
+                # Log application launch
+                if self.current_user:
+                    self.db_manager.log_action(self.current_user[0], "LAUNCH_APP", 
+                                             f"Launched {app_name}")
+                    
+                self.notification_manager.show("Application", 
+                                             f"Launched {app_name.replace('_', ' ').title()}",
+                                             "info")
+                                             
+            except Exception as e:
+                self.notification_manager.show("Error", 
+                                             f"Cannot launch {app_name}: {str(e)}",
+                                             "error")
+                logging.error(f"Application launch error: {app_name} - {e}")
+                
+    def show_start_menu(self):
+        """Show start menu"""
+        theme = self.config_manager.get_theme()
         
-        session = load_session()
-        session["desktop_icons"].append({"path": path, "x": x, "y": y})
-        save_session(session)
-
-    def handle_icon_click(self, icon_id):
-        path = self.desktop_icons[icon_id]["path"]
-        if os.path.isdir(path):
-            FileManager(self).open(path)
-        else:
-            FileManager(self).navigate_file(path)
-
-    def drag_icon(self, event, icon_id):
-        icon = self.desktop_icons[icon_id]
-        x, y = event.x, event.y
-        if self.config["desktop"]["grid_snap"]:
-            grid_size = self.config["desktop"]["icon_size"]
-            x = round(x / grid_size) * grid_size
-            y = round(y / grid_size) * grid_size
-        self.desktop.coords(icon["icon"], x, y)
-        self.desktop.coords(icon["text"], x + 24, y + 56)
+        # Create start menu window
+        start_menu = tk.Toplevel(self.root)
+        start_menu.title("Start Menu")
+        start_menu.geometry("300x400")
+        start_menu.configure(bg=theme["bg_secondary"])
+        start_menu.overrideredirect(True)
         
-        session = load_session()
-        for s_icon in session["desktop_icons"]:
-            if s_icon["path"] == icon["path"]:
-                s_icon["x"], s_icon["y"] = x, y
-        save_session(session)
-
-    def show_icon_menu(self, event, icon_id):
-        menu = tk.Menu(self.root, tearoff=0, bg="rgba(0,0,0,0.4)", fg="white")
-        path = self.desktop_icons[icon_id]["path"]
-        menu.add_command(label="Open", command=lambda: self.handle_icon_click(icon_id))
-        menu.add_command(label="Delete", command=lambda: self.delete_icon(icon_id))
-        menu.add_separator()
-        menu.add_command(label="Properties", command=lambda: self.show_properties(path))
-        menu.post(event.x_root, event.y_root)
-
-    def delete_icon(self, icon_id):
-        icon = self.desktop_icons[icon_id]
-        self.desktop.delete(icon["icon"])
-        self.desktop.delete(icon["text"])
-        session = load_session()
-        session["desktop_icons"] = [i for i in session["desktop_icons"] if i["path"] != icon["path"]]
-        save_session(session)
-        del self.desktop_icons[icon_id]
-
-    def show_properties(self, path):
-        try:
-            stats = os.stat(path)
-            content = f"""
-            Path: {path}
-            Type: {'Directory' if os.path.isdir(path) else 'File'}
-            Size: {stats.st_size} bytes
-            Modified: {datetime.datetime.fromtimestamp(stats.st_mtime)}
-            Permissions: {oct(stats.st_mode)[-3:]}
-            """
-            self.create_window("Properties", lambda f: tk.Label(f, text=content, fg="white", 
-                                                            bg="rgba(0,0,0,0.4)", justify=tk.LEFT).pack(padx=10, pady=10))
-        except Exception as e:
-            logging.error(f"Properties error: {path} - {e}")
-
-    def create_window(self, title, content, x=100, y=100, width=600, height=400):
-        window = tk.Toplevel(self.root)
-        window.geometry(f"{width}x{height}+{x}+{y}")
-        window.overrideredirect(True)
-        window.configure(bg='rgba(0,0,0,0.4)')
-        window.attributes('-alpha', 0.95)
+        # Position menu
+        x = self.start_button.winfo_rootx()
+        y = self.start_button.winfo_rooty() - 400
+        start_menu.geometry(f"300x400+{x}+{y}")
         
-        # Titlebar
-        titlebar = tk.Frame(window, bg='rgba(255,255,255,0.2)')
-        titlebar.pack(fill=tk.X)
-        tk.Label(titlebar, text=title, fg="white", bg='rgba(255,255,255,0.2)', 
-                font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
-        btn_frame = tk.Frame(titlebar, bg='rgba(255,255,255,0.2)')
-        btn_frame.pack(side=tk.RIGHT)
-        tk.Button(btn_frame, text="_", command=lambda: window.iconify(), fg="white", 
-                 bg='rgba(255,255,255,0.2)', bd=0).pack(side=tk.LEFT)
-        tk.Button(btn_frame, text="□", command=lambda: self.toggle_maximize(window), 
-                 fg="white", bg='rgba(255,255,255,0.2)', bd=0).pack(side=tk.LEFT)
-        tk.Button(btn_frame, text="✕", command=lambda: self.close_window(window), 
-                 fg="white", bg='rgba(255,255,255,0.2)', bd=0).pack(side=tk.LEFT)
+        # User info
+        user_frame = tk.Frame(start_menu, bg=theme["accent_primary"])
+        user_frame.pack(fill=tk.X)
         
-        # Content
-        content_frame = tk.Frame(window, bg='rgba(0,0,0,0.4)')
-        content_frame.pack(fill=tk.BOTH, expand=True)
-        content(content_frame)
+        tk.Label(user_frame, text=f"👤 {self.current_user[1]}", font=("Ubuntu", 12, "bold"),
+                bg=theme["accent_primary"], fg="white").pack(pady=10)
         
-        # Window management
-        self.make_draggable(window, titlebar)
-        self.make_resizable(window)
-        window.bind("<Button-1>", lambda e: self.focus_window(window))
-        window.bind("<Button-3>", lambda e: self.show_context_menu(e, window))
-        self.windows.append(window)
+        # Applications
+        apps_frame = tk.Frame(start_menu, bg=theme["bg_secondary"])
+        apps_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Taskbar button
-        btn = tk.Button(self.taskbar_windows, text=title, fg="white", bg="rgba(0,0,0,0.6)", 
-                       bd=0, command=lambda: self.toggle_window(window))
-        btn.pack(side=tk.LEFT, padx=2)
-        window.taskbar_btn = btn
+        app_list = [
+            ("📁 File Manager", "file_manager"),
+            ("📝 Text Editor", "text_editor"),
+            ("🧮 Calculator", "calculator"),
+            ("🖼️ Image Viewer", "image_viewer"),
+            ("🎵 Music Player", "music_player"),
+            ("📊 System Monitor", "system_monitor")
+        ]
         
-        # Save session
-        session = load_session()
-        session["open_windows"].append({
-            "title": title,
-            "x": x, "y": y, "width": width, "height": height
-        })
-        save_session(session)
+        for app_text, app_name in app_list:
+            btn = tk.Button(apps_frame, text=app_text, font=("Ubuntu", 11),
+                           bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                           anchor=tk.W, width=25,
+                           command=lambda app=app_name: [self.launch_application(app), start_menu.destroy()])
+            btn.pack(fill=tk.X, pady=2)
+            
+        # Separator
+        tk.Frame(start_menu, bg=theme["border"], height=2).pack(fill=tk.X, padx=10)
         
-        return window
-
-    def toggle_window(self, window):
-        if window.state() == "withdrawn":
-            window.deiconify()
-        else:
-            window.withdraw()
-
-    def toggle_maximize(self, window):
-        if not hasattr(window, '_is_maximized') or not window._is_maximized:
-            window._geometry = window.geometry()
-            window.geometry(f"{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()-32}+0+0")
-            window._is_maximized = True
-        else:
-            window.geometry(window._geometry)
-            window._is_maximized = False
-
-    def close_window(self, window):
-        try:
-            self.windows.remove(window)
-            window.taskbar_btn.destroy()
-            session = load_session()
-            session["open_windows"] = [w for w in session["open_windows"] if w["title"] != window.title()]
-            save_session(session)
-            window.destroy()
-        except Exception as e:
-            logging.error(f"Close window error: {e}")
-
-    def focus_window(self, window):
-        try:
-            window.lift()
-            self.z_index += 1
-            window.configure(takefocus=True)
-            window.focus_force()
-        except Exception as e:
-            logging.warning(f"Focus window error: {e}")
-
-    def make_draggable(self, window, titlebar):
-        titlebar.bind("<Button-1>", lambda e: self.start_drag(e, window))
-        titlebar.bind("<B1-Motion>", lambda e: self.do_drag(e, window))
-
-    def start_drag(self, event, window):
-        window._drag_start_x = event.x_root
-        window._drag_start_y = event.y_root
-        window._window_x = window.winfo_x()
-        window._window_y = window.winfo_y()
-
-    def do_drag(self, event, window):
-        if hasattr(window, '_is_maximized') and window._is_maximized:
-            return
-        dx = event.x_root - window._drag_start_x
-        dy = event.y_root - window._drag_start_y
-        window.geometry(f"+{window._window_x + dx}+{window._window_y + dy}")
-
-    def make_resizable(self, window):
-        resize_handle = tk.Frame(window, bg="white", width=10, height=10, cursor="se-resize")
-        resize_handle.place(relx=1.0, rely=1.0, anchor="se")
-        resize_handle.bind("<Button-1>", lambda e: self.start_resize(e, window))
-        resize_handle.bind("<B1-Motion>", lambda e: self.do_resize(e, window))
-
-    def start_resize(self, event, window):
-        window._resize_start_x = event.x_root
-        window._resize_start_y = event.y_root
-        window._resize_width = window.winfo_width()
-        window._resize_height = window.winfo_height()
-
-    def do_resize(self, event, window):
-        dx = event.x_root - window._resize_start_x
-        dy = event.y_root - window._resize_start_y
-        new_width = max(200, window._resize_width + dx)
-        new_height = max(150, window._resize_height + dy)
-        window.geometry(f"{new_width}x{new_height}")
-
-    def show_context_menu(self, event, window):
-        menu = tk.Menu(self.root, tearoff=0, bg="rgba(0,0,0,0.4)", fg="white")
-        menu.add_command(label="Close", command=lambda: self.close_window(window))
-        menu.add_command(label="Maximize/Restore", command=lambda: self.toggle_maximize(window))
-        menu.add_command(label="Minimize", command=window.iconify)
-        menu.post(event.x_root, event.y_root)
-
+        # System options
+        system_frame = tk.Frame(start_menu, bg=theme["bg_secondary"])
+        system_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        system_options = [
+            ("⚙️ Settings", self.open_settings),
+            ("🔒 Lock", self.lock_screen),
+            ("🚪 Logout", self.logout),
+            ("🔄 Restart", self.restart),
+            ("⏻ Shutdown", self.shutdown)
+        ]
+        
+        for option_text, command in system_options:
+            btn = tk.Button(system_frame, text=option_text, font=("Ubuntu", 11),
+                           bg=theme["bg_tertiary"], fg=theme["fg_primary"],
+                           anchor=tk.W, width=25,
+                           command=lambda cmd=command: [cmd(), start_menu.destroy()])
+            btn.pack(fill=tk.X, pady=2)
+            
+        # Auto-close menu when clicking outside
+        def close_menu(event):
+            if event.widget != start_menu and not str(event.widget).startswith(str(start_menu)):
+                start_menu.destroy()
+                
+        self.root.bind("<Button-1>", close_menu, add="+")
+        start_menu.bind("<FocusOut>", lambda e: start_menu.destroy())
+        
+        # Focus menu
+        start_menu.focus_set()
+        
+    def open_settings(self):
+        """Open system settings"""
+        self.notification_manager.show("Settings", "Settings not implemented yet", "info")
+        
+    def lock_screen(self):
+        """Lock screen"""
+        self.notification_manager.show("Lock", "Screen lock not implemented yet", "info")
+        
+    def logout(self):
+        """Logout current user"""
+        if messagebox.askyesno("Logout", "Are you sure you want to logout?"):
+            # Log logout
+            if self.current_user:
+                self.db_manager.log_action(self.current_user[0], "LOGOUT", "User logged out")
+                
+            self.sound_manager.play_shutdown_sound()
+            self.root.quit()
+            
+    def restart(self):
+        """Restart system"""
+        if messagebox.askyesno("Restart", "Are you sure you want to restart?"):
+            # Log restart
+            if self.current_user:
+                self.db_manager.log_action(self.current_user[0], "RESTART", "System restart")
+                
+            self.sound_manager.play_shutdown_sound()
+            
+            # In a real system, this would restart the computer
+            self.notification_manager.show("Restart", "Restart functionality not available in demo", "warning")
+            
+    def shutdown(self):
+        """Shutdown system"""
+        if messagebox.askyesno("Shutdown", "Are you sure you want to shutdown?"):
+            # Log shutdown
+            if self.current_user:
+                self.db_manager.log_action(self.current_user[0], "SHUTDOWN", "System shutdown")
+                
+            self.sound_manager.play_shutdown_sound()
+            
+            # In a real system, this would shutdown the computer
+            self.root.quit()
+            
+    def bind_events(self):
+        """Bind keyboard and mouse events"""
+        # Global keyboard shortcuts
+        self.root.bind('<Control-Alt-t>', lambda e: self.launch_application("terminal"))
+        self.root.bind('<Control-Alt-f>', lambda e: self.launch_application("file_manager"))
+        self.root.bind('<Control-Alt-c>', lambda e: self.launch_application("calculator"))
+        
+        # Desktop context menu
+        self.desktop_canvas.bind("<Button-3>", self.show_desktop_menu)
+        
     def show_desktop_menu(self, event):
-        menu = tk.Menu(self.root, tearoff=0, bg="rgba(0,0,0,0.4)", fg="white")
-        menu.add_command(label="New File", command=self.create_new_file)
-        menu.add_command(label="New Folder", command=self.create_new_folder)
+        """Show desktop context menu"""
+        theme = self.config_manager.get_theme()
+        
+        menu = tk.Menu(self.root, tearoff=0,
+                      bg=theme["bg_secondary"], fg=theme["fg_primary"])
+        
+        menu.add_command(label="Refresh Desktop", command=self.refresh_desktop)
         menu.add_separator()
-        menu.add_command(label="Change Wallpaper", command=self.change_wallpaper)
-        menu.add_command(label="Desktop Settings", command=self.open_desktop_settings)
-        menu.post(event.x_root, event.y_root)
-
-    def create_new_file(self):
-        path = os.path.join(os.environ["HOME"], f"new_file_{int(time.time())}.txt")
-        open(path, 'a').close()
-        self.add_desktop_icon(path, 100, 100)
-
-    def create_new_folder(self):
-        path = os.path.join(os.environ["HOME"], f"new_folder_{int(time.time())}")
-        os.makedirs(path, exist_ok=True)
-        self.add_desktop_icon(path, 100, 100)
-
-    def change_wallpaper(self):
-        file = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg *.jpeg")])
-        if file:
-            config = load_config()
-            config["desktop"]["wallpaper"] = file
-            save_config(config)
-            self.apply_wallpaper()
-
-    def apply_wallpaper(self):
-        wallpaper = self.config["desktop"]["wallpaper"]
-        if wallpaper and os.path.exists(wallpaper):
-            try:
-                img = Image.open(wallpaper)
-                img = img.resize((self.root.winfo_screenwidth(), self.root.winfo_screenheight()), Image.LANCZOS)
-                self.desktop_bg = ImageTk.PhotoImage(img)
-                self.desktop.create_image(0, 0, image=self.desktop_bg, anchor=tk.NW)
-            except Exception as e:
-                logging.warning(f"Wallpaper apply error: {e}")
-
-    def open_desktop_settings(self):
-        def build_ui(frame):
-            tk.Label(frame, text="Icon Size", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-            size_var = tk.IntVar(value=self.config["desktop"]["icon_size"])
-            tk.Scale(frame, from_=32, to=96, orient=tk.HORIZONTAL, variable=size_var, 
-                    bg="rgba(0,0,0,0.4)", fg="white").pack()
-            snap_var = tk.BooleanVar(value=self.config["desktop"]["grid_snap"])
-            tk.Checkbutton(frame, text="Grid Snap", variable=snap_var, fg="white", 
-                          bg="rgba(0,0,0,0.4)").pack(pady=5)
-            tk.Button(frame, text="Apply", command=lambda: self.save_desktop_settings(size_var.get(), snap_var.get())).pack(pady=10)
-        self.create_window("Desktop Settings", build_ui)
-
-    def save_desktop_settings(self, icon_size, grid_snap):
-        config = load_config()
-        config["desktop"].update({"icon_size": icon_size, "grid_snap": grid_snap})
-        save_config(config)
-        self.config = config
-        # Refresh icons
-        session = load_session()
-        for icon_id in list(self.desktop_icons.keys()):
-            self.delete_icon(icon_id)
-        self.load_desktop_icons()
-
-    def shutdown(self):
+        menu.add_command(label="New Folder", command=self.create_desktop_folder)
+        menu.add_command(label="New File", command=self.create_desktop_file)
+        menu.add_separator()
+        menu.add_command(label="Paste", command=self.paste_to_desktop)
+        menu.add_separator()
+        menu.add_command(label="Display Settings", command=self.open_display_settings)
+        menu.add_command(label="Personalize", command=self.open_personalization)
+        
         try:
-            subprocess.run(["sudo", "poweroff"], check=True)
-        except Exception as e:
-            logging.error(f"Shutdown error: {e}")
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+            
+    def refresh_desktop(self):
+        """Refresh desktop"""
+        self.notification_manager.show("Desktop", "Desktop refreshed", "info")
+        
+    def create_desktop_folder(self):
+        """Create new folder on desktop"""
+        self.notification_manager.show("Desktop", "Create folder not implemented yet", "info")
+        
+    def create_desktop_file(self):
+        """Create new file on desktop"""
+        self.notification_manager.show("Desktop", "Create file not implemented yet", "info")
+        
+    def paste_to_desktop(self):
+        """Paste to desktop"""
+        self.notification_manager.show("Desktop", "Paste not implemented yet", "info")
+        
+    def open_display_settings(self):
+        """Open display settings"""
+        self.notification_manager.show("Settings", "Display settings not implemented yet", "info")
+        
+    def open_personalization(self):
+        """Open personalization settings"""
+        self.notification_manager.show("Settings", "Personalization not implemented yet", "info")
 
-    def reboot(self):
-        try:
-            subprocess.run(["sudo", "reboot"], check=True)
-        except Exception as e:
-            logging.error(f"Reboot error: {e}")
-
-    def logout(self):
-        try:
-            session = load_session()
-            session["open_windows"] = []
-            save_session(session)
-            self.cleanup()
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        except Exception as e:
-            logging.error(f"Logout error: {e}")
-
-    def cleanup(self):
-        try:
-            for window in self.windows[:]:
-                self.close_window(window)
-            if self.root:
-                self.root.destroy()
-            logging.info("WindowManager cleanup completed")
-        except Exception as e:
-            logging.error(f"Cleanup error: {e}")
-
-### --- RESOURCE MONITOR ---
-class ResourceMonitor:
-    def __init__(self, wm):
-        self.wm = wm
-        self.running = True
-        self.cpu_history = queue.Queue(maxsize=60)
-        self.ram_history = queue.Queue(maxsize=60)
-        threading.Thread(target=self.monitor, daemon=True).start()
-
-    def monitor(self):
-        while self.running:
-            try:
-                cpu = psutil.cpu_percent()
-                mem = psutil.virtual_memory().percent
-                self.cpu_history.put(cpu)
-                self.ram_history.put(mem)
-                
-                if cpu > 80 or mem > 80:
-                    self.wm.notifications.send(
-                        "High Resource Usage",
-                        f"CPU: {cpu:.1f}% Memory: {mem:.1f}%"
-                    )
-                
-                for proc in psutil.process_iter(['pid', 'status']):
-                    if proc.info['status'] == psutil.STATUS_ZOMBIE:
-                        try:
-                            proc.terminate()
-                            logging.info(f"Terminated zombie process: {proc.pid}")
-                        except:
-                            pass
-                
-                time.sleep(1)
-            except Exception as e:
-                logging.warning(f"Resource monitor error: {e}")
-
-    def get_usage_history(self):
-        return {
-            "cpu": list(self.cpu_history.queue),
-            "ram": list(self.ram_history.queue)
-        }
-
-### --- ONBOARDING WIZARD ---
-class OnboardingWizard:
-    def __init__(self, wm, config):
-        self.wm = wm
-        self.config = config
-        self.window = None
-        self.locales = {
-            "en_US": "English (US)",
-            "es_ES": "Español",
-            "fr_FR": "Français",
-            "de_DE": "Deutsch"
-        }
-        self.timezones = [
-            "UTC", "America/New_York", "Europe/London", "Asia/Tokyo",
-            "Australia/Sydney", "America/Los_Angeles", "Europe/Berlin"
-        ]
-
-    def open(self):
-        if not self.config["first_boot"]:
+def main():
+    """Main entry point"""
+    try:
+        # Setup display environment
+        if not setup_display():
+            print("Starting in console mode...")
+            console = ConsoleMode()
+            console.start()
             return
-        self.window = self.wm.create_window("Berke0S Setup", self.build_ui, width=500, height=500)
-
-    def build_ui(self, frame):
-        notebook = ttk.Notebook(frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Welcome
-        welcome = ttk.Frame(notebook)
-        notebook.add(welcome, text="Welcome")
-        tk.Label(welcome, text="Welcome to Berke0S!\nLet's get started.", 
-                fg="white", bg="rgba(0,0,0,0.4)", font=("Arial", 14)).pack(pady=20)
-
-        # Language
-        lang_frame = ttk.Frame(notebook)
-        notebook.add(lang_frame, text="Language")
-        tk.Label(lang_frame, text="Select Language", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=10)
-        lang_var = tk.StringVar(value=self.config["language"])
-        ttk.Combobox(lang_frame, textvariable=lang_var, values=list(self.locales.keys()), 
-                    state="readonly").pack(pady=5)
-
-        # Timezone
-        tz_frame = ttk.Frame(notebook)
-        notebook.add(tz_frame, text="Timezone")
-        tk.Label(tz_frame, text="Select Timezone", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=10)
-        tz_var = tk.StringVar(value=self.config["timezone"])
-        ttk.Combobox(tz_frame, textvariable=tz_var, values=self.timezones, 
-                    state="readonly").pack(pady=5)
-
-        # WiFi
-        wifi_frame = ttk.Frame(notebook)
-        notebook.add(wifi_frame, text="Wi-Fi")
-        tk.Label(wifi_frame, text="Wi-Fi Network", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        ssid_var = tk.StringVar()
-        ssids = self.scan_wifi()
-        ssid_menu = ttk.Combobox(wifi_frame, textvariable=ssid_var, values=ssids, 
-                                state="readonly")
-        ssid_menu.pack(pady=5)
-        tk.Button(wifi_frame, text="Refresh", command=lambda: self.refresh_wifi(ssid_menu)).pack()
-        tk.Label(wifi_frame, text="Password", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        passwd_var = tk.StringVar()
-        tk.Entry(wifi_frame, textvariable=passwd_var, show="*", bg="rgba(0,0,0,0.6)", 
-                fg="white").pack(pady=5)
-
-        # User
-        user_frame = ttk.Frame(notebook)
-        notebook.add(user_frame, text="User")
-        tk.Label(user_frame, text="Username", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        user_var = tk.StringVar()
-        tk.Entry(user_frame, textvariable=user_var, bg="rgba(0,0,0,0.6)", 
-                fg="white").pack(pady=5)
-        tk.Label(user_frame, text="Password", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        user_passwd_var = tk.StringVar()
-        tk.Entry(user_frame, textvariable=user_passwd_var, show="*", 
-                bg="rgba(0,0,0,0.6)", fg="white").pack(pady=5)
-        tk.Label(user_frame, text="Confirm Password", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        confirm_passwd_var = tk.StringVar()
-        tk.Entry(user_frame, textvariable=confirm_passwd_var, show="*", 
-                bg="rgba(0,0,0,0.6)", fg="white").pack(pady=5)
-
-        # EULA
-        eula_frame = ttk.Frame(notebook)
-        notebook.add(eula_frame, text="EULA")
-        eula_text = tk.Text(eula_frame, height=10, bg="rgba(0,0,0,0.6)", fg="white", 
-                           wrap=tk.WORD)
-        eula_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        eula_text.insert(tk.END, self.get_eula_text())
-        eula_text.config(state="disabled")
-        accept_var = tk.BooleanVar()
-        tk.Checkbutton(eula_frame, text="I accept the terms", 
-                      variable=accept_var, fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-
-        # Accessibility
-        access_frame = ttk.Frame(notebook)
-        notebook.add(access_frame, text="Accessibility")
-        high_contrast_var = tk.BooleanVar(value=self.config["accessibility"]["high_contrast"])
-        tk.Checkbutton(access_frame, text="High Contrast Mode", variable=high_contrast_var, 
-                      fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        screen_reader_var = tk.BooleanVar(value=self.config["accessibility"]["screen_reader"])
-        tk.Checkbutton(access_frame, text="Enable Screen Reader", variable=screen_reader_var, 
-                      fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        font_scale_var = tk.DoubleVar(value=self.config["accessibility"]["font_scale"])
-        tk.Label(access_frame, text="Font Scale", fg="white", bg="rgba(0,0,0,0.4)").pack(pady=5)
-        tk.Scale(access_frame, from_=0.8, to=2.0, resolution=0.1, orient=tk.HORIZONTAL, 
-                variable=font_scale_var, bg="rgba(0,0,0,0.6)", fg="white").pack(pady=5)
-
-        # Finish
-        tk.Button(frame, text="Finish", command=lambda: self.finish(
-            lang_var.get(), tz_var.get(), ssid_var.get(), passwd_var.get(),
-            user_var.get(), user_passwd_var.get(), confirm_passwd_var.get(),
-            accept_var.get(), high_contrast_var.get(), screen_reader_var.get(),
-            font_scale_var.get()
-        )).pack(pady=10)
-
-    def get_eula_text(self):
-        default_eula = """
-        Berke0S End User License Agreement
-        This software is provided "as is", without warranty of any kind.
-        By using Berke0S, you agree to the terms of this agreement.
-        """
-        try:
-            if not os.path.exists(EULA_FILE):
-                with open(EULA_FILE, 'w') as f:
-                    f.write(default_eula)
-            with open(EULA_FILE, 'r') as f:
-                return f.read()
-        except Exception as e:
-            logging.warning(f"EULA load error: {e}")
-            return default_eula
-
-    def scan_wifi(self):
-        try:
-            output = subprocess.check_output(["iwconfig"], text=True, stderr=subprocess.DEVNULL)
-            ssids = re.findall(r'ESSID:"(.*?)"', output)
-            return list(set(ssids))
-        except Exception as e:
-            logging.warning(f"WiFi scan error: {e}")
-            return []
-
-    def refresh_wifi(self, combobox):
-        ssids = self.scan_wifi()
-        combobox["values"] = ssids
-
-    def finish(self, lang, tz, ssid, passwd, username, passwd1, passwd2, eula_accepted, 
-               high_contrast, screen_reader, font_scale):
-        if not eula_accepted:
-            messagebox.showerror("Error", "You must accept the EULA")
-            return
-        if not username or not passwd1 or passwd1 != passwd2:
-            messagebox.showerror("Error", "Invalid username or passwords do not match")
-            return
-        if not lang or not tz:
-            messagebox.showerror("Error", "Please select language and timezone")
-            return
-
-        try:
-            # Update config
-            self.config.update({
-                "first_boot": False,
-                "language": lang,
-                "timezone": tz,
-                "wifi": {"ssid": ssid, "password": passwd},
-                "users": [{"username": username, 
-                          "password": hashlib.sha256(passwd1.encode()).hexdigest()}],
-                "eula_accepted": True,
-                "accessibility": {
-                    "high_contrast": high_contrast,
-                    "screen_reader": screen_reader,
-                    "font_scale": font_scale
-                }
-            })
-            save_config(self.config)
-
-            # Setup user
-            home_dir = f"/home/{username}"
-            os.makedirs(home_dir, exist_ok=True)
-            subprocess.run(["sudo", "chown", f"{username}:{username}", home_dir], check=True)
-            subprocess.run(["sudo", "chmod", "700", home_dir], check=True)
-
-            # Setup timezone
-            subprocess.run(["sudo", "ln", "-sf", f"/usr/share/zoneinfo/{tz}", 
-                           "/etc/localtime"], check=True)
-
-            # Setup WiFi
-            if ssid and passwd:
-                subprocess.run(["sudo", "iwconfig", "wlan0", "essid", ssid, "key", passwd], check=True)
-                subprocess.run(["sudo", "udhcpc", "-i", "wlan0"], check=True)
-                self.wm.notifications.send("Network", "Connected to Wi-Fi")
-
-            # Setup accessibility
-            if screen_reader:
-                try:
-                    subprocess.run(["espeak", "Welcome to Berke0S"], check=True)
-                except:
-                    pass
-
-            self.window.destroy()
-            self.wm.notifications.send("Setup Complete", "Berke0S is ready to use!")
-            logging.info("Onboarding completed successfully")
-        except Exception as e:
-            logging.error(f"Onboarding finish error: {e}")
-            messagebox.showerror("Error", f"Setup failed: {str(e)}")
-
-### --- LOGIN MANAGER ---
-class LoginManager:
-    def __init__(self, wm, config):
-        self.wm = wm
-        self.config = config
-        self.window = None
-        self.attempts = 0
-        self.lockout_time = 0
-
-    def show_login(self):
-        if time.time() < self.lockout_time:
-            messagebox.showerror("Locked", 
-                                f"Too many attempts. Try again in {int(self.lockout_time - time.time())} seconds")
-            return
-        self.window = self.wm.create_window("Login to Berke0S", self.build_ui, 
-                                          width=350, height=250)
-
-    def build_ui(self, frame):
-        tk.Label(frame, text="Welcome to Berke0S", fg="white", bg="rgba(0,0,0,0.4)", 
-                font=("Arial", 16)).pack(pady=10)
-        tk.Label(frame, text="Username", fg="white", bg="rgba(0,0,0,0.4)").pack()
-        user_var = tk.StringVar()
-        ttk.Combobox(frame, textvariable=user_var, 
-                    values=[u["username"] for u in self.config["users"]], 
-                    state="readonly").pack(pady=5)
-        tk.Label(frame, text="Password", fg="white", bg="rgba(0,0,0,0.4)").pack()
-        passwd_var = tk.StringVar()
-        tk.Entry(frame, textvariable=passwd_var, show="*", bg="rgba(0,0,0,0.6)", 
-                fg="white").pack(pady=5)
-        tk.Button(frame, text="Login", command=lambda: self.login(user_var.get(), 
-                                                                passwd_var.get())).pack(pady=10)
-        tk.Button(frame, text="Guest Login", 
-                 command=lambda: self.guest_login()).pack(pady=5)
-
-    def login(self, username, password):
-        hashed_pass = hashlib.sha256(password.encode()).hexdigest()
-        for user in self.config["users"]:
-            if user["username"] == username and user["password"] == hashed_pass:
-                os.environ["USER"] = username
-                os.environ["HOME"] = f"/home/{username}"
-                self.window.destroy()
-                self.wm.notifications.send("Welcome", f"Logged in as {username}")
-                logging.info(f"User logged in: {username}")
-                return
-        self.attempts += 1
-        if self.attempts >= 3:
-            self.lockout_time = time.time() + 60
-            self.window.destroy()
-            messagebox.showerror("Error", "Too many attempts. Locked for 60 seconds")
-            logging.warning(f"Login lockout for user: {username}")
-        else:
-            messagebox.showerror("Error", "Invalid credentials")
-            logging.warning(f"Failed login attempt for user: {username}")
-
-    def guest_login(self):
-        os.environ["USER"] = "guest"
-        os.environ["HOME"] = "/tmp/guest"
-        os.makedirs("/tmp/guest", exist_ok=True)
-        self.window.destroy()
-        self.wm.notifications.send("Welcome", "Logged in as Guest")
-        logging.info("Guest login")
-
-### --- FILE MANAGER ---
-class FileManager:
-    def __init__(self, wm):
-        self.wm = wm
-        self.file_types = {
-            ".txt": lambda path: TextEditor(self.wm).open(path),
-            ".py": lambda path: TextEditor(self.wm).open(path),
-            ".jpg": lambda path: self.wm.create_window("Image Viewer", 
-                                                     lambda f: tk.Label(f, 
-                                                                       image=tk.PhotoImage(file=path)).pack()),
-            ".png": lambda path: self.wm.create_window("Image Viewer", 
-                                                     lambda f: tk.Label(f, 
-                                                                       image=tk.PhotoImage(file=path)).pack()),
-            ".mp3": lambda path: MediaPlayer(self.wm).play(path),
-            ".mp4": lambda path: MediaPlayer(self.wm).play(path),
-            ".zip": lambda path: self.extract_archive(path, "zip"),
-            ".tar.gz": lambda path: self.extract_archive(path, "tar.gz")
-        }
-
-    def open(self, path=None):
-        self.current_path = path or os.environ["HOME"]
-        self.wm.create_window("File Manager", self.build_ui, width=800, height=500)
-
-    def build_ui(self, frame):
-        # Toolbar
-        toolbar = tk.Frame(frame, bg="rgba(0,0,0,0.4)")
-        toolbar.pack(fill=tk.X)
-        tk.Button(toolbar, text="New File", command=self.create_file).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="New Folder", command=self.create_folder).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="Copy", command=self.copy).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="Paste", command=self.paste).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="Delete", command=self.delete).pack(side=tk.LEFT, padx=2)
-        
-        # Path bar
-        path_frame = tk.Frame(frame, bg="rgba(0,0,0,0.4)")
-        path_frame.pack(fill=tk.X)
-        self.path_var = tk.StringVar(value=self.current_path)
-        tk.Entry(path_frame, textvariable=self.path_var, bg="rgba(0,0,0,0.6)", 
-                fg="white").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        tk.Button(path_frame, text="Go", command=self.navigate_path).pack(side=tk.LEFT)
-
-        # Main view
-        paned = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True)
-
-        left_panel = tk.Frame(paned, bg="rgba(0,0,0,0.4)")
-        paned.add(left_panel, weight=1)
-        right_panel = tk.Frame(paned, bg="rgba(0,0,0,0.4)")
-        paned.add(right_panel, weight=1)
-
-        self.left_list = tk.Listbox(left_panel, bg="rgba(0,0,0,0.6)", fg="white", 
-                                   selectmode=tk.EXTENDED)
-        self.left_list.pack(fill=tk.BOTH, expand=True)
-        self.right_list = tk.Listbox(right_panel, bg="rgba(0,0,0,0.6)", fg="white", 
-                                    selectmode=tk.EXTENDED)
-        self.right_list.pack(fill=tk.BOTH, expand=True)
-
-        self.left_list.bind("<Double-1>", lambda e: self.navigate(self.left_list, self.current_path))
-        self.right_list.bind("<Double-1>", lambda e: self.navigate(self.right_list, self.current_path))
-        self.left_list.bind("<Button-3>", lambda e: self.show_file_menu(e, self.left_list))
-        self.right_list.bind("<Button-3>", lambda e: self.show_file_menu(e, self.right_list))
-
-        self.clipboard = []
-        self.update_lists()
-
-    def update_lists(self):
-        for lb in [self.left_list, self.right_list]:
-            lb.delete(0, tk.END)
-            try:
-                items = sorted(os.listdir(self.current_path), 
-                              key=lambda x: (not os.path.isdir(os.path.join(self.current_path, x)), x))
-                for item in items:
-                    prefix = "📁 " if os.path.isdir(os.path.join(self.current_path, item)) else "📄 "
-                    lb.insert(tk.END, prefix + item)
-            except Exception as e:
-                lb.insert(tk.END, f"Error: {str(e)}")
-                logging.warning(f"File list update error: {e}")
-
-    def navigate_path(self):
-        self.current_path = self.path_var.get()
-        self.update_lists()
-
-    def navigate(self, listbox, path):
-        try:
-            selected = listbox.get(listbox.curselection()[0])[2:]  # Remove emoji prefix
-            new_path = os.path.join(path, selected)
-            if os.path.isdir(new_path):
-                self.current_path = new_path
-                self.path_var.set(new_path)
-                self.update_lists()
-            else:
-                self.navigate_file(new_path)
-        except Exception as e:
-            logging.warning(f"Navigate error: {e}")
-
-    def navigate_file(self, path):
-        ext = os.path.splitext(path)[1].lower()
-        handler = self.file_types.get(ext, lambda p: messagebox.showinfo("Info", 
-                                                                       "No handler for this file type"))
-        try:
-            handler(path)
-            logging.info(f"Opened file: {path}")
-        except Exception as e:
-            logging.error(f"File open error: {path} - {e}")
-            messagebox.showerror("Error", f"Cannot open file: {str(e)}")
-
-    def show_file_menu(self, event, listbox):
-        try:
-            selected = [listbox.get(i)[2:] for i in listbox.curselection()]
-            if not selected:
-                return
-            menu = tk.Menu(self.wm.root, tearoff=0, bg="rgba(0,0,0,0.4)", fg="white")
-            menu.add_command(label="Open", command=lambda: self.navigate(listbox, self.current_path))
-            menu.add_command(label="Copy", command=self.copy)
-            menu.add_command(label="Delete", command=self.delete)
-            menu.add_command(label="Rename", command=self.rename)
-            menu.add_command(label="Add to Desktop", command=lambda: self.add_to_desktop(selected))
-            menu.add_separator()
-            menu.add_command(label="Properties", command=lambda: self.wm.show_properties(
-                os.path.join(self.current_path, selected[0])))
-            menu.post(event.x_root, event.y_root)
-        except Exception as e:
-            logging.warning(f"File menu error: {e}")
-
-    def create_file(self):
-        name = filedialog.asksavefilename(initialdir=self.current_path, 
-                                         defaultextension=".txt")
-        if name:
-            open(name, 'a').close()
-            self.update_lists()
-            logging.info(f"Created file: {name}")
-
-    def create_folder(self):
-        name = filedialog.askdirectory(initialdir=self.current_path)
-        if name:
-            os.makedirs(name, exist_ok=True)
-            self.update_lists()
-            logging.info(f"Created folder: {name}")
-
-    def copy(self):
-        self.clipboard = [os.path.join(self.current_path, self.left_list.get(i)[2:]) 
-                         for i in self.left_list.curselection()]
-        self.wm.notifications.send("File Manager", f"Copied {len(self.clipboard)} items")
-        logging.info(f"Copied files: {self.clipboard}")
-
-    def paste(self):
-        for item in self.clipboard:
-            dest = os.path.join(self.current_path, os.path.basename(item))
-            if os.path.isdir(item):
-                shutil.copytree(item, dest, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest)
-        self.update_lists()
-        self.wm.notifications.send("File Manager", f"Pasted {len(self.clipboard)} items")
-        logging.info(f"Pasted files to: {self.current_path}")
-
-    def delete(self):
-        selected = [self.left_list.get(i)[2:] for i in self.left_list.curselection()]
-        if messagebox.askyesno("Confirm", f"Delete {len(selected)} items?"):
-            for item in selected:
-                path = os.path.join(self.current_path, item)
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
-            self.update_lists()
-            self.wm.notifications.send("File Manager", f"Deleted {len(selected)} items")
-            logging.info(f"Deleted files: {selected}")
-
-    def rename(self):
-        selected = self.left_list.get(self.left_list.curselection()[0])[2:]
-        new_name = filedialog.asksavefilename(initialdir=self.current_path, 
-                                             initialfile=selected)
-        if new_name:
-            os.rename(os.path.join(self.current_path, selected), new_name)
-            self.update_lists()
-            logging.info(f"Renamed {selected} to {new_name}")
-
-    def add_to_desktop(self, items):
-        for item in items:
-            self.wm.add_desktop_icon(os.path.join(self.current_path, item), 100, 100)
-        self.wm.notifications.send("File Manager", f"Added {len(items)} items to desktop")
-
-    def extract_archive(self, path, archive_type):
-        dest = os.path.splitext(path)[0] if archive_type == "zip" else path.replace(".tar.gz", "")
-        try:
-            if archive_type == "zip":
-                with zipfile.ZipFile(path, 'r') as z:
-                    z.extractall(dest)
-            elif archive_type == "tar.gz":
-                with tarfile.open(path, 'r:gz') as t:
-                    t.extractall(dest)
-            self.wm.notifications.send("File Manager", f"Extracted archive to {dest}")
-            self.update_lists()
-            logging.info(f"Extracted archive: {path}")
-        except Exception as e:
-            logging.error(f"Archive extraction error: {path} - {e}")
-            messagebox.showerror("Error", f"Extraction failed: {str(e)}")
-
-### --- TEXT EDITOR ---
-class TextEditor:
-    def __init__(self, wm):
-        self.wm = wm
-        self.file_path = None
-
-    def open(self, file_path=None):
-        self.file_path = file_path
-        self.wm.create_window("Text Editor", lambda f: self.build_ui(f, file_path), width=800, height=600)
-
-    def build_ui(self, frame, file_path):
-        toolbar = tk.Frame(frame, bg="rgba(0,0,0,0.4)")
-        toolbar.pack(fill=tk.X)
-        tk.Button(toolbar, text="Save", command=self.save).pack(side=tk.LEFT, padx=2)
-        tk.Button(toolbar, text="Open", command=self.open_file).pack(side=tk.LEFT, padx=2)
-        
-        self.text_area = tk.Text(frame, bg="rgba(0,0,0,0.6)", fg="white", insertbackground="white", 
-                                font=("Monospace", 12))
-        self.text_area.pack(fill=tk.BOTH, expand=True)
-        
-        if file_path and os.path.exists(file_path):
-            try:
-                with open(file_path, 'r') as f:
-                    self.text_area.insert(tk.END, f.read())
-            except Exception as e:
-                logging.error(f"Text editor open error: {file_path} - {e}")
-                messagebox.showerror("Error", f"Cannot open file: {str(e)}")
-
-    def save(self):
-        if not self.file_path:
-            self.file_path = filedialog.asksavefilename(defaultextension=".txt")
-        if self.file_path:
-            try:
-                with open(self.file_path, 'w') as f:
-                    f.write(self.text_area.get("1.0", tk.END))
-                self.wm.notifications.send("Text Editor", f"Saved {self.file_path}")
-                logging.info(f"Saved file: {self.file_path}")
-            except Exception as e:
-                logging.error(f"Text editor save error: {self.file_path} - {e}")
-                messagebox.showerror("Error", f"Cannot save file: {str(e)}")
-
-    def open_file(self):
-        file_path = filedialog.askopenfilename()
-        if file_path:
-            self.file_path = file_path
-            self.text_area.delete("1.0", tk.END)
-            try:
-                with open(file_path, 'r') as f:
-                    self.text_area.insert(tk.END, f.read())
-                logging.info(f"Opened file: {file_path}")
-            except Exception as e:
-                logging.error(f"Text editor open error: {file_path} - {e}")
-                messagebox.showerror("Error", f"Cannot open file: {str(e)}")
-
-### --- CALCULATOR ---
-class Calculator:
-    def __init__(self, wm):
-        self.wm = wm
-        self.expression = ""
-
-    def open(self):
-        self.wm.create_window("Calculator", self.build_ui, width=300, height=400)
-
-    def build_ui(self, frame):
-        entry = tk.Entry(frame, textvariable=tk.StringVar(value="0"), bg="rgba(0,0,0,0.6)", 
-                        fg="white", font=("Arial", 16), justify="right")
-        entry.pack(fill=tk.X)
-        entry.pack(fill=tk.X)
-
-        # Create button grid for calculator
-        button_frame = tk.Frame(frame, bg="#333333")
-        button_frame.pack(fill=tk.BOTH, expand=True)
-
-        # Define buttons: (text, row, column, colspan)
-        buttons = [
-            ('C', 1, 0), ('±', 1, 1), ('%', 1, 2), ('÷', 1, 3),
-            ('7', 2, 0), ('8', 2, 1), ('9', 2, 2), ('×', 2, 3),
-            ('4', 3, 0), ('5', 3, 1), ('6', 3, 2), ('−', 3, 3),
-            ('1', 4, 0), ('2', 4, 1), ('3', 4, 2), ('+', 4, 3),
-            ('0', 5, 0, 2), ('.', 5, 2), ('=', 5, 3)
-        ]
-
-        for btn_info in buttons:
-            text = btn_info[0]
-            row = btn_info[1]
-            col = btn_info[2]
-            colspan = btn_info[3] if len(btn_info) > 3 else 1
-            cmd = lambda x=text: self.press(x)
-            tk.Button(button_frame, text=text, command=cmd, fg="white", 
-                     bg="#555555", font=("Arial", 12), 
-                     relief=tk.RAISED).grid(row=row, column=col, 
-                                           columnspan=colspan, 
-                                           sticky="nsew", padx=2, pady=2)
-
-        # Configure grid weights
-        for i in range(6):
-            button_frame.grid_rowconfigure(i, weight=1)
-        for i in range(4):
-            button_frame.grid_columnconfigure(i, weight=1)
-
-        self.entry = entry
-
-    def press(self, key):
-        """Handle calculator button presses."""
-        try:
-            if key == 'C':
-                self.expression = ""
-                self.entry.delete(0, tk.END)
-                self.entry.insert(tk.END, "0")
-            elif key == '±':
-                if self.expression.startswith('-'):
-                    self.expression = self.expression[1:]
-                else:
-                    self.expression = '-' + self.expression
-                self.entry.delete(0, tk.END)
-                self.entry.insert(tk.END, self.expression or "0")
-            elif key == '=':
-                try:
-                    result = str(eval(self.expression, {"__builtins__": {}, "sin": math.sin, "cos": math.cos, "tan": math.tan}))
-                    self.expression = result
-                    self.entry.delete(0, tk.END)
-                    self.entry.insert(tk.END, result)
-                except:
-                    self.wm.notifications.send("Calculator", "Invalid expression")
-                    self.expression = ""
-                    self.entry.delete(0, tk.END)
-                    self.entry.insert(tk.END, "0")
-            else:
-                if self.expression == "0":
-                    self.expression = ""
-                self.expression += key.replace('×', '*').replace('÷', '/').replace('−', '-')
-                self.entry.delete(0, tk.END)
-                self.entry.insert(tk.END, self.expression)
-        except Exception as e:
-            self.wm.notifications.send("Calculator", f"Error: {str(e)}")
-
-### --- WEB BROWSER ---
-class WebBrowser:
-    """A lightweight web browser using dillo."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.process = None
-
-    def open(self):
-        """Open the web browser window."""
-        self.wm.create_window("Web Browser", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the browser UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
             
-            url_var = tk.StringVar(value="http://tinycorelinux.net")
-            tk.Entry(toolbar, textvariable=url_var, bg="#555555", fg="white", 
-                    font=("Arial", 12)).pack(side=tk.LEFT, fill=tk.X, 
-                                            expand=True, padx=5, pady=5)
-            tk.Button(toolbar, text="Go", command=lambda: self.navigate(url_var.get()), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(toolbar, text="Home", command=lambda: self.navigate("http://tinycorelinux.net"), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(toolbar, text="Stop", command=self.stop, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-
-            # Placeholder for browser view
-            tk.Label(frame, text="Dillo Browser (External Window)", fg="white", 
-                    bg="#333333", font=("Arial", 14)).pack(expand=True)
-
-            # Start dillo
-            self.navigate(url_var.get())
-        except Exception as e:
-            self.wm.notifications.send("Web Browser", f"Error: {str(e)}")
-
-    def navigate(self, url):
-        """Navigate to a URL."""
-        try:
-            if self.process:
-                self.stop()
-            self.process = subprocess.Popen(["dillo", url], 
-                                           stdout=subprocess.DEVNULL, 
-                                           stderr=subprocess.DEVNULL)
-        except Exception as e:
-            self.wm.notifications.send("Web Browser", f"Failed to open URL: {str(e)}")
-
-    def stop(self):
-        """Stop the browser process."""
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process = None
-            except:
-                pass
-
-### --- SYSTEM INFO ---
-class SystemInfo:
-    """Display system information."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("System Info", self.build_ui, width=500, height=400)
-
-    def build_ui(self, frame):
-        """Build the system info UI."""
-        try:
-            info = self.get_system_info()
-            text = (
-                f"OS: Berke0S\n"
-                f"Kernel: {info.get('kernel', 'Unknown')}\n"
-                f"CPU: {info.get('cpu', 'Unknown')}\n"
-                f"Memory: {info.get('memory', 'Unknown')}\n"
-                f"Disk: {info.get('disk', 'Unknown')}\n"
-                f"Network: {info.get('network', 'Unknown')}\n"
-                f"Battery: {info.get('battery', 'Unknown')}"
-            )
-            tk.Label(frame, text=text, fg="white", bg="#333333", 
-                    justify=tk.LEFT, font=("Arial", 12)).pack(padx=10, pady=10)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                    bg="#333333").pack(padx=10, pady=10)
-
-    def get_system_info(self):
-        """Collect system information."""
-        info = {}
-        try:
-            info['kernel'] = subprocess.check_output(["uname", "-r"], text=True).strip()
-            with open('/proc/cpuinfo', 'r') as f:
-                cpuinfo = f.read()
-                model = re.search(r'model name\s*:\s*(.+)', cpuinfo)
-                info['cpu'] = model.group(1) if model else "Unknown"
-            mem = psutil.virtual_memory()
-            info['memory'] = f"{mem.total // 1024**2} MB total, {mem.used // 1024**2} MB used"
-            disk = psutil.disk_usage('/')
-            info['disk'] = f"{disk.total // 1024**3} GB total, {disk.used // 1024**3} GB used"
-            output = subprocess.check_output(["ip", "addr"], text=True)
-            net = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+/\d+)', output)
-            info['network'] = net.group(1) if net else "Not connected"
-            if os.path.exists("/sys/class/power_supply/BAT0/capacity"):
-                with open("/sys/class/power_supply/BAT0/capacity", 'r') as f:
-                    info['battery'] = f"{f.read().strip()}%"
-            else:
-                info['battery'] = "No battery detected"
-        except:
-            pass
-        return info
-
-### --- PACKAGE MANAGER ---
-class PackageManager:
-    """Manage Tiny Core extensions."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Package Manager", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the package manager UI."""
-        try:
-            tk.Label(frame, text="Available Packages", fg="white", bg="#333333").pack(pady=5)
-            self.package_list = tk.Listbox(frame, bg="#555555", fg="white", 
-                                          selectmode=tk.SINGLE)
-            self.package_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Install", command=self.install_package, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Remove", command=self.remove_package, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Refresh", command=self.refresh_packages, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_packages()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                    bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_packages(self):
-        """Refresh the package list."""
-        try:
-            self.package_list.delete(0, tk.END)
-            output = subprocess.check_output(["tce-ab"], text=True, stderr=subprocess.DEVNULL)
-            packages = output.splitlines()
-            for pkg in packages:
-                if pkg.strip():
-                    self.package_list.insert(tk.END, pkg.strip())
-        except Exception as e:
-            self.wm.notifications.send("Package Manager", f"Error: {str(e)}")
-
-    def install_package(self):
-        """Install a selected package."""
-        try:
-            selected = self.package_list.get(self.package_list.curselection()[0])
-            subprocess.run(["sudo", "tce-load", "-wi", selected], check=True)
-            self.wm.notifications.send("Package Manager", f"Installed {selected}")
-        except Exception as e:
-            self.wm.notifications.send("Package Manager", f"Error: {str(e)}")
-
-    def remove_package(self):
-        """Remove a selected package."""
-        try:
-            selected = self.package_list.get(self.package_list.curselection()[0])
-            subprocess.run(["sudo", "tce-audit", "remove", selected], check=True)
-            self.refresh_packages()
-            self.wm.notifications.send("Package Manager", f"Removed {selected}")
-        except Exception as e:
-            self.wm.notifications.send("Package Manager", f"Error: {str(e)}")
-
-### --- TASK MANAGER ---
-class TaskManager:
-    """Manage running processes."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Task Manager", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the task manager UI."""
-        try:
-            self.task_list = tk.Listbox(frame, bg="#555555", fg="white", 
-                                       selectmode=tk.SINGLE)
-            self.task_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="End Process", command=self.end_process, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.update_tasks()
-            self.wm.root.after(2000, self.update_tasks)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                    bg="#333333").pack(padx=10, pady=10)
-
-    def update_tasks(self):
-        """Update the task list."""
-        try:
-            self.task_list.delete(0, tk.END)
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-                try:
-                    info = proc.info
-                    line = f"PID: {info['pid']} | {info['name']} | CPU: {info['cpu_percent']:.1f}% | Mem: {info['memory_percent']:.1f}%"
-                    self.task_list.insert(tk.END, line)
-                except:
-                    pass
-            self.wm.root.after(2000, self.update_tasks)
-        except:
-            pass
-
-    def end_process(self):
-        """Terminate a selected process."""
-        try:
-            selected = self.task_list.get(self.task_list.curselection()[0])
-            pid = int(selected.split('|')[0].split(':')[1].strip())
-            proc = psutil.Process(pid)
-            proc.terminate()
-            self.wm.notifications.send("Task Manager", f"Terminated process {pid}")
-            self.update_tasks()
-        except Exception as e:
-            self.wm.notifications.error(f"Error: {str(e)}")
-
-### --- FILE MANAGER ---
-class FileManager:
-    """A Windows-like file manager with shortcuts and search."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.current_path = os.path.expanduser("~")
-        self.shortcuts = {}
-
-    def open(self):
-        self.wm.create_window("File Manager", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the file manager UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Up", command=self.go_up, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="New Folder", command=self.create_folder, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Delete", command=self.delete_item, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Create Shortcut", command=self.create_shortcut, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            path_var = tk.StringVar(value=self.current_path)
-            tk.Entry(toolbar, textvariable=path_var, bg="#555555").pack(
-                side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-            tk.Button(toolbar, text="Go", command=lambda: self.change_path(path_var.get()), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            search_var = tk.StringVar()
-            tk.Entry(toolbar, textvariable=search_var, width=15, bg="#555555").pack(
-                side=tk.RIGHT, padx=2)
-            tk.Button(toolbar, text="Search", command=lambda: self.search_files(search_var.get()), 
-                     bg="#555555", fg="white").pack(side=tk.RIGHT, padx=2)
-
-            # Main content
-            main_frame = tk.Frame(frame, bg="#333333")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-
-            # Directory tree
-            tree_frame = tk.Frame(main_frame, bg="#333333")
-            tree_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-            tk.Label(tree_frame, text="Folders", fg="white", bg="#333333").pack()
-            self.tree = ttk.Treeview(tree_frame, show="tree")
-            self.tree.pack(fill=tk.Y, expand=True)
-            self.tree.bind('<<TreeviewOpen>>', self.update_tree)
-            self.tree.bind('<Double-1>', self.tree_select)
-            self.populate_tree()
-
-            # File list
-            list_frame = tk.Frame(main_frame, bg="#333333")
-            list_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-            tk.Label(list_frame, text="Files", fg="white", bg="#333333").pack()
-            self.file_list = tk.Listbox(list_frame, bg="#555555", fg="white")
-            self.file_list.pack(fill=tk.BOTH, expand=True)
-            self.file_list.bind('<Double-1>', self.open_item)
-            self.file_list.bind('<Button-3>', self.show_context_menu)
-            self.update_file_list()
-
-            # Context menu
-            self.context_menu = tk.Menu(frame, tearoff=0, bg="#333333", fg="white")
-            self.context_menu.add_command(label="Open", command=self.open_item)
-            self.context_menu.add_command(label="Delete", command=self.delete_item)
-            self.context_menu.add_command(label="Rename", command=self.rename_item)
-            self.context_menu.add_command(label="Create Shortcut", command=self.create_shortcut)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def populate_tree(self):
-        """Populate directory tree."""
-        try:
-            self.tree.delete(*self.tree.get_children())
-            root_node = self.tree.insert("", "end", text="Home", open=True, 
-                                    values=(os.path.expanduser("~"),))
-            self._add_tree_nodes(root_node, os.path.expanduser("~"))
-        except:
-            pass
-
-    def _add_tree_nodes(self, parent, path):
-        """Recursively add directory nodes."""
-        try:
-            for item in sorted(os.listdir(path)):
-                item_path = os.path.join(path, item)
-                if os.path.isdir(item_path):
-                    node = self.tree.insert(parent, "end", text=item, 
-                                          values=(item_path,))
-                    self.tree.insert(node, "end", text="dummy")
-        except:
-            pass
-
-    def update_tree(self, event):
-        """Update tree when a node is expanded."""
-        try:
-            node = self.tree.focus()
-            if not self.tree.get_children(node):
-                return
-            path = self.tree.item(node, "values")[0]
-            self.tree.delete(*self.tree.get_children(node))
-            self._add_tree_nodes(node, path)
-        except:
-            pass
-
-    def tree_select(self, event):
-        """Handle tree node selection."""
-        try:
-            node = self.tree.focus()
-            path = self.tree.item(node, "values")[0]
-            self.current_path = path
-            self.update_file_list()
-        except:
-            pass
-
-    def update_file_list(self):
-        """Update the file list."""
-        try:
-            self.file_list.delete(0, tk.END)
-            for item in sorted(os.listdir(self.current_path)):
-                item_path = os.path.join(self.current_path, item)
-                prefix = "[DIR] " if os.path.isdir(item_path) else ""
-                self.file_list.insert(tk.END, f"{prefix}{item}")
-        except:
-            pass
-
-    def go_up(self):
-        """Navigate to parent directory."""
-        try:
-            parent = os.path.dirname(self.current_path)
-            if parent != self.current_path:
-                self.current_path = parent
-                self.populate_tree()
-                self.update_file_list()
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def change_path(self, path):
-        """Change to a specified path."""
-        try:
-            if os.path.isdir(path):
-                self.current_path = path
-                self.populate_tree()
-                self.update_file_list()
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def open_item(self, event=None):
-        """Open a selected item based on extension."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0])
-            item = selected.replace("[DIR] ", "")
-            item_path = os.path.join(self.current_path, item)
-            if os.path.isdir(item_path):
-                self.current_path = item_path
-                self.populate_tree()
-                self.update_file_list()
-            else:
-                self.wm.open_file(item_path)
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def create_folder(self):
-        """Create a new folder."""
-        try:
-            name = simpledialog.askstring("New Folder", "Folder name:")
-            if name:
-                os.makedirs(os.path.join(self.current_path, name))
-                self.update_file_list()
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def delete_item(self):
-        """Delete a selected item."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0])
-            item = selected.replace("[DIR] ", "")
-            item_path = os.path.join(self.current_path, item)
-            if messagebox.askyesno("Confirm", f"Delete {item}?"):
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
-                self.update_file_list()
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def rename_item(self):
-        """Rename a selected item."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0])
-            item = selected.replace("[DIR] ", "")
-            item_path = os.path.join(self.current_path, item)
-            new_name = simpledialog.askstring("Rename", "New name:", initialvalue=item)
-            if new_name:
-                os.rename(item_path, os.path.join(self.current_path, new_name))
-                self.update_file_list()
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def create_shortcut(self):
-        """Create a desktop shortcut."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0])
-            item = selected.replace("[DIR] ", "")
-            item_path = os.path.join(self.current_path, item)
-            self.wm.add_desktop_shortcut(item_path, 100, 100)
-            self.wm.notifications.send("File Manager", f"Shortcut created for {item}")
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def search_files(self, query):
-        """Search for files in the current directory."""
-        try:
-            self.file_list.delete(0, tk.END)
-            for root, dirs, files in os.walk(self.current_path):
-                for name in files + dirs:
-                    if query.lower() in name.lower():
-                        item_path = os.path.join(root, name)
-                        prefix = "[DIR] " if os.path.isdir(item_path) else ""
-                        self.file_list.insert(tk.END, f"{prefix}{name}")
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def show_context_menu(self, event):
-        """Show context menu for file list."""
-        try:
-            self.file_list.selection_clear(0, tk.END)
-            self.file_list.selection_set(self.file_list.nearest(event.y))
-            self.context_menu.post(event.x_root, event.y_root)
-        except:
-            pass
-
-### --- ADVANCED CODE EDITOR ---
-### --- CODE EDITOR ---
-class CodeEditor:
-    def __init__(self, wm):
-        self.wm = wm
-        self.file_path = None
-        self.text_widget = None
-
-    def open(self, path=None):
-        """Open a code editor window, optionally with a file."""
-        self.file_path = path
-        self.wm.create_window("Code Editor", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the code editor UI without syntax highlighting."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="rgba(0,0,0,0.4)")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="New", command=self.new_file).pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Open", command=self.open_file).pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save", command=self.save_file).pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save As", command=self.save_file_as).pack(side=tk.LEFT, padx=2)
-
-            # Text area
-            self.text_widget = tk.Text(frame, bg="rgba(0,0,0,0.6)", fg="white", 
-                                      font=("Monospace", 12), wrap=tk.NONE)
-            self.text_widget.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Check for installation argument
+        if len(sys.argv) > 1 and sys.argv[1] == "--install":
+            # Force installation mode
+            config_manager = ConfigManager()
+            config_manager.set("first_run", True)
             
-            # Load file content if path exists
-            if self.file_path and os.path.exists(self.file_path):
-                try:
-                    with open(self.file_path, 'r', encoding='utf-8') as f:
-                        self.text_widget.insert(tk.END, f.read())
-                    self.wm.notifications.send("Code Editor", f"Opened {self.file_path}")
-                    self.wm.audit_log(f"Opened file in code editor: {self.file_path}")
-                except Exception as e:
-                    self.wm.notifications.send("Code Editor", f"Error opening file: {str(e)}")
-
-            # Bind accessibility
-            self.text_widget.bind("<FocusIn>", self.wm.accessibility.read_widget)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="rgba(0,0,0,0.4)").pack(padx=10, pady=10)
-
-    def new_file(self):
-        """Clear the text area for a new file."""
-        self.file_path = None
-        self.text_widget.delete(1.0, tk.END)
-        self.wm.notifications.send("Code Editor", "New file created")
-
-    def open_file(self):
-        """Open a file dialog to select a file."""
-        path = filedialog.askopenfilename(filetypes=[("Code Files", "*.py *.sh *.c *.cpp"), 
-                                                    ("All Files", "*.*")])
-        if path:
-            self.file_path = path
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    self.text_widget.delete(1.0, tk.END)
-                    self.text_widget.insert(tk.END, f.read())
-                self.wm.notifications.send("Code Editor", f"Opened {path}")
-                self.wm.audit_log(f"Opened file in code editor: {path}")
-            except Exception as e:
-                self.wm.notifications.send("Code Editor", f"Error opening file: {str(e)}")
-
-    def save_file(self):
-        """Save the current file."""
-        if not self.file_path:
-            self.save_file_as()
-        else:
-            try:
-                with open(self.file_path, 'w', encoding='utf-8') as f:
-                    f.write(self.text_widget.get(1.0, tk.END).rstrip())
-                self.wm.notifications.send("Code Editor", f"Saved {self.file_path}")
-                self.wm.audit_log(f"Saved file in code editor: {self.file_path}")
-            except Exception as e:
-                self.wm.notifications.send("Code Editor", f"Error saving file: {str(e)}")
-
-    def save_file_as(self):
-        """Save the file with a new name."""
-        path = filedialog.asksavefilename(defaultextension=".py", 
-                                         filetypes=[("Code Files", "*.py *.sh *.c *.cpp"), 
-                                                    ("All Files", "*.*")])
-        if path:
-            self.file_path = path
-            self.save_file()
-
-    def run_code(self):
-        """Run the code based on language."""
-        try:
-            code = self.editor.get(1.0, tk.END).strip()
-            self.output.delete(1.0, tk.END)
-            if not code:
-                return
-            if self.filename and self.filename.endswith('.py'):
-                process = subprocess.run(["python3", "-"], input=code, text=True, 
-                                       capture_output=True)
-                self.output.insert(tk.END, process.stdout + process.stderr)
-            elif self.filename and self.filename.endswith('.sh'):
-                process = subprocess.run(["bash", "-c", code], text=True, 
-                                       capture_output=True)
-                self.output.insert(tk.END, process.stdout + process.stderr)
-            else:
-                self.wm.notifications.send("Code Editor", "Unsupported file type")
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def update_highlighter(self, language):
-        """Update syntax highlighter."""
-        try:
-            language = language.lower()
-            if language in ['py', 'python']:
-                self.highlighter = PygmentsHighlighter(self.editor, "python")
-            elif language in ['sh', 'bash']:
-                self.highlighter = PygmentsHighlighter(self.editor, "bash")
-            self.highlight_code()
-        except:
-            pass
-
-    def highlight_code(self, event=None):
-        """Apply syntax highlighting."""
-        try:
-            self.highlighter.highlight()
-        except:
-            pass
-
-### --- SYNTAX HIGHLIGHTER ---
-class PygmentsHighlighter:
-    """Syntax highlighting using Pygments."""
-    def __init__(self, text_widget, language):
-        self.text = text_widget
-        self.lexer = get_lexer_by_name(language)
-        self.formatter = TkinterFormatter()
-        self.text.tag_configure("keyword", foreground="#ff79c6")
-        self.text.tag_configure("string", foreground="#f1fa8c")
-        self.text.tag_configure("comment", foreground="#6272a4")
-        self.text.tag_configure("builtin", foreground="#8be9fd")
-
-    def highlight(self):
-        """Highlight the text content."""
-        try:
-            code = self.text.get(1.0, tk.END).strip()
-            self.text.tag_remove("keyword", 1.0, tk.END)
-            self.text.tag_remove("string", 1.0, tk.END)
-            self.text.tag_remove("comment", 1.0, tk.END)
-            self.text.tag_remove("builtin", 1.0, tk.END)
-            tokens = list(lex(code, self.lexer))
-            index = "1.0"
-            for ttype, value in tokens:
-                tag = str(ttype).split('.')[-1].lower()
-                if tag in ['keyword', 'string', 'comment', 'builtin']:
-                    end_index = f"{index}+{len(value)}c"
-                    self.text.tag_add(tag, index, end_index)
-                    index = end_index
-        except:
-            pass
-
-class TkinterFormatter(Formatter):
-    """Custom Pygments formatter for Tkinter."""
-    def format(self, tokensource, outfile):
-        for ttype, value in tokensource:
-            yield ttype, value
-
-### --- IMAGE VIEWER ---
-class ImageViewer:
-    """View image files."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.image = None
-        self.photo = None
-
-    def open_file(self, filename):
-        """Open an image file."""
-        self.wm.create_window("Image Viewer", lambda f: self.build_ui(f, filename), 
-                            width=800, height=600)
-
-    def build_ui(self, frame, filename):
-        """Build the image viewer UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Zoom In", command=self.zoom_in, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Zoom Out", command=self.zoom_out, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Fit", command=self.fit_image, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-
-            # Image canvas
-            self.canvas = tk.Canvas(frame, bg="#333333")
-            self.canvas.pack(fill=tk.BOTH, expand=True)
-            self.image = Image.open(filename)
-            self.photo = ImageTk.PhotoImage(self.image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-            self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def zoom_in(self):
-        """Zoom in on the image."""
-        try:
-            self.image = self.image.resize((int(self.image.width * 1.2), 
-                                          int(self.image.height * 1.2)), 
-                                         Image.LANCZOS)
-            self.photo = ImageTk.PhotoImage(self.image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        except:
-            pass
-
-    def zoom_out(self):
-        """Zoom out on the image."""
-        try:
-            self.image = self.image.resize((int(self.image.width * 0.8), 
-                                          int(self.image.height * 0.8)), 
-                                         Image.LANCZOS)
-            self.photo = ImageTk.PhotoImage(self.image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        except:
-            pass
-
-    def fit_image(self):
-        """Fit image to window."""
-        try:
-            self.image = Image.open(self.image.filename)
-            self.photo = ImageTk.PhotoImage(self.image)
-            self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
-        except:
-            pass
-
-### --- PRESENTATION APP ---
-class PresentationApp:
-    """Basic presentation application."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.slides = []
-        self.current_slide = 0
-
-    def open(self):
-        self.wm.create_window("Presentation", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the presentation UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Add Slide", command=self.add_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Next", command=self.next_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Previous", command=self.prev_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Open Images", command=self.load_images, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-
-            # Slide canvas
-            self.canvas = tk.Canvas(frame, bg="#333333")
-            self.canvas.pack(fill=tk.BOTH, expand=True)
-            self.add_slide()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def add_slide(self):
-        """Add a new slide."""
-        try:
-            self.slides.append({"image": None, "text": ""})
-            self.current_slide = len(self.slides) - 1
-            self.update_slide()
-        except:
-            pass
-
-    def load_images(self):
-        """Load images for slides."""
-        try:
-            files = filedialog.askopenfilenames(filetypes=[("Images", "*.png *.jpg")])
-            for file in files:
-                self.slides.append({"image": file, "text": ""})
-            self.current_slide = len(self.slides) - 1
-            self.update_slide()
-        except Exception as e:
-            self.wm.notifications.send("Presentation", f"Error: {str(e)}")
-
-    def next_slide(self):
-        """Go to next slide."""
-        try:
-            if self.current_slide < len(self.slides) - 1:
-                self.current_slide += 1
-                self.update_slide()
-        except:
-            pass
-
-    def prev_slide(self):
-        """Go to previous slide."""
-        try:
-            if self.current_slide > 0:
-                self.current_slide -= 1
-                self.update_slide()
-        except:
-            pass
-
-    def update_slide(self):
-        """Update the current slide display."""
-        try:
-            self.canvas.delete("all")
-            slide = self.slides[self.current_slide]
-            if slide["image"]:
-                img = Image.open(slide["image"])
-                img = img.resize((400, 300), Image.LANCZOS)
-                self.photo = ImageTk.PhotoImage(img)
-                self.canvas.create_image(200, 150, image=self.photo)
-            self.canvas.create_text(200, 350, text=slide["text"], fill="white", 
-                                  font=("Arial", 12))
-        except:
-            pass
-
-### --- MEDIA PLAYER ---
-class MediaPlayer:
-    """Play media files using mpv."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.process = None
-
-    def play(self, file_path):
-        """Play a media file."""
-        try:
-            if self.process:
-                self.stop()
-            self.process = subprocess.Popen(["mpv", file_path], 
-                                          stdout=subprocess.DEVNULL, 
-                                          stderr=subprocess.DEVNULL)
-            self.wm.notifications.send("Media Player", f"Playing {os.path.basename(file_path)}")
-        except Exception as e:
-            self.wm.notifications.send("Media Player", f"Error: {str(e)}")
-
-    def stop(self):
-        """Stop media playback."""
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process = None
-            except:
-                pass
-
-### --- CONTROL CENTER ---
-class ControlCenter:
-    """System settings with customization."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Control Center", self.build_ui, width=600, height=500)
-
-    def build_ui(self, frame):
-        """Build the control center UI."""
-        try:
-            notebook = ttk.Notebook(frame)
-            notebook.pack(fill=tk.BOTH, expand=True)
-
-            # Network tab
-            network = ttk.Frame(notebook)
-            notebook.add(network, text="Network")
-            tk.Label(network, text="Wi-Fi SSID", fg="white", bg="#333333").pack(pady=5)
-            ssid_var = tk.StringVar()
-            self.ssid_menu = ttk.Combobox(network, textvariable=ssid_var, state="readonly")
-            self.ssid_menu.pack(pady=5)
-            tk.Label(network, text="Password", fg="white", bg="#333333").pack(pady=5)
-            passwd_var = tk.StringVar()
-            tk.Entry(network, textvariable=passwd_var, show="*", bg="#555555").pack(pady=5)
-            tk.Button(network, text="Connect", 
-                     command=lambda: self.connect_wifi(ssid_var.get(), passwd_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(network, text="Refresh", command=self.refresh_wifi, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(network, text="Connect Wired", command=self.connect_wired, 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            # Display tab
-            display = ttk.Frame(notebook)
-            notebook.add(display, text="Display")
-            tk.Label(display, text="Brightness", fg="white", bg="#333333").pack(pady=5)
-            bright_var = tk.IntVar(value=50)
-            tk.Scale(display, from_=0, to=100, orient=tk.HORIZONTAL, variable=bright_var, 
-                    bg="#555555").pack(pady=5)
-            tk.Button(display, text="Apply", 
-                     command=lambda: self.set_brightness(bright_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            # Audio tab
-            audio = ttk.Frame(notebook)
-            notebook.add(audio, text="Audio")
-            tk.Label(audio, text="Volume", fg="white", bg="#333333").pack(pady=5)
-            volume_var = tk.IntVar(value=50)
-            tk.Scale(audio, from_=0, to=100, orient=tk.HORIZONTAL, variable=volume_var, 
-                    bg="#555555").pack(pady=5)
-            tk.Button(audio, text="Apply", 
-                     command=lambda: self.set_volume(volume_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            # User Management tab
-            users = ttk.Frame(notebook)
-            notebook.add(users, text="Users")
-            tk.Label(users, text="User Management", fg="white", bg="#333333").pack(pady=5)
-            self.user_list = tk.Listbox(users, bg="#555555", fg="white")
-            self.user_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(users, text="Add User", command=self.add_user, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(users, text="Delete User", command=self.delete_user, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(users, text="Change Password", command=self.change_password, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_users()
-
-            # Customization tab
-            customize = ttk.Frame(notebook)
-            notebook.add(customize, text="Customization")
-            tk.Label(customize, text="Desktop Background", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(customize, text="Set Image", command=self.set_background_image, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(customize, text="Set Video", command=self.set_background_video, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(customize, text="Taskbar Color", fg="white", bg="#333333").pack(pady=5)
-            color_var = tk.StringVar(value="#333333")
-            tk.Entry(customize, textvariable=color_var, bg="#555555").pack(pady=5)
-            tk.Button(customize, text="Apply Color", 
-                     command=lambda: self.set_taskbar_color(color_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(customize, text="Theme", fg="white", bg="#333333").pack(pady=5)
-            theme_var = tk.StringVar(value="Dark")
-            tk.OptionMenu(customize, theme_var, "Dark", "Light", 
-                         command=self.set_theme).pack(pady=5)
-
-            self.refresh_wifi()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_wifi(self):
-        """Refresh Wi-Fi networks."""
-        try:
-            output = subprocess.check_output(["sudo", "iwlist", "wlan0", "scan"], 
-                                           text=True, stderr=subprocess.DEVNULL)
-            ssids = re.findall(r'ESSID:"(.*?)"', output)
-            self.ssid_menu["values"] = list(set(ssids))
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def connect_wifi(self, ssid, password):
-        """Connect to Wi-Fi."""
-        try:
-            subprocess.run(["sudo", "iwconfig", "wlan0", "essid", ssid, "key", password], 
-                          check=True)
-            subprocess.run(["sudo", "udhcpc", "-i", "wlan0"], check=True)
-            self.wm.notifications.send("Control Center", f"Connected to {ssid}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def connect_wired(self):
-        """Connect to wired network."""
-        try:
-            subprocess.run(["sudo", "udhcpc", "-i", "eth0"], check=True)
-            self.wm.notifications.send("Control Center", "Connected to wired network")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_brightness(self, value):
-        """Set screen brightness."""
-        try:
-            subprocess.run(["sudo", "sh", "-c", f"echo {value} > /sys/class/backlight/*/brightness"], 
-                          check=True)
-            self.wm.notifications.send("Control Center", f"Brightness set to {value}%")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_volume(self, value):
-        """Set system volume."""
-        try:
-            subprocess.run(["amixer", "set", "Master", f"{value}%"], check=True)
-            self.wm.notifications.send("Control Center", f"Volume set to {value}%")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def refresh_users(self):
-        """Refresh user list."""
-        try:
-            self.user_list.delete(0, tk.END)
-            output = subprocess.check_output(["cat", "/etc/passwd"], text=True)
-            for line in output.splitlines():
-                if line.startswith(("tc:", "user")):
-                    username = line.split(":")[0]
-                    self.user_list.insert(tk.END, username)
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def add_user(self):
-        """Add a new user."""
-        try:
-            username = simpledialog.askstring("Add User", "Username:")
-            if not username:
-                return
-            password = simpledialog.askstring("Add User", "Password:", show="*")
-            if not password:
-                return
-            subprocess.run(["sudo", "useradd", "-m", username], check=True)
-            subprocess.run(f"echo {username}:{password} | sudo chpasswd", 
-                          shell=True, check=True)
-            hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-            self.wm.session_manager.add_user(username, hashed.decode())
-            self.refresh_users()
-            self.wm.notifications.send("Control Center", f"User {username} added")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def delete_user(self):
-        """Delete a user."""
-        try:
-            selected = self.user_list.get(self.user_list.curselection()[0])
-            if selected == "tc":
-                self.wm.notifications.send("Control Center", "Cannot delete default user")
-                return
-            if messagebox.askyesno("Confirm", f"Delete user {selected}?"):
-                subprocess.run(["sudo", "userdel", "-r", selected], check=True)
-                self.wm.session_manager.remove_user(selected)
-                self.refresh_users()
-                self.wm.notifications.send("Control Center", f"User {selected} deleted")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def change_password(self):
-        """Change user password."""
-        try:
-            selected = self.user_list.get(self.user_list.curselection()[0])
-            password = simpledialog.askstring("Change Password", "New password:", show="*")
-            if password:
-                subprocess.run(f"echo {selected}:{password} | sudo chpasswd", 
-                              shell=True, check=True)
-                hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-                self.wm.session_manager.update_password(selected, hashed.decode())
-                self.wm.notifications.send("Control Center", f"Password changed for {selected}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_background_image(self):
-        """Set desktop background image."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg")])
-            if filename:
-                subprocess.run(["feh", "--bg-scale", filename], check=True)
-                self.wm.config["background"] = filename
-                self.wm.save_config()
-                self.wm.notifications.send("Control Center", "Background set")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_background_video(self):
-        """Set desktop background video."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Videos", "*.mp4 *.avi")])
-            if filename:
-                self.wm.stop_background_video()
-                self.wm.background_video = subprocess.Popen(
-                    ["mplayer", "-vo", "x11", "-loop", "0", filename], 
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.wm.config["background_video"] = filename
-                self.wm.save_config()
-                self.wm.notifications.send("Control Center", "Video background set")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_taskbar_color(self, color):
-        """Set taskbar color."""
-        try:
-            self.wm.taskbar.config(bg=color)
-            self.wm.config["taskbar_color"] = color
-            self.wm.save_config()
-            self.wm.notifications.send("Control Center", "Taskbar color set")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_theme(self, theme):
-        """Set UI theme."""
-        try:
-            colors = {"Dark": {"bg": "#333333", "fg": "white", "entry": "#555555"}, 
-                     "Light": {"bg": "#f0f0f0", "fg": "black", "entry": "#ffffff"}}
-            self.wm.config["theme"] = theme
-            self.wm.apply_theme(colors[theme])
-            self.wm.save_config()
-            self.wm.notifications.send("Control Center", f"Theme set to {theme}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-### --- DISK MANAGER ---
-class DiskManager:
-    """Manage disk partitions."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Disk Manager", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the disk manager UI."""
-        try:
-            self.disk_list = tk.Listbox(frame, bg="#555555", fg="white", 
-                                       selectmode=tk.SINGLE)
-            self.disk_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Mount", command=self.mount_disk, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Unmount", command=self.unmount_disk, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Format", command=self.format_disk, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_disks()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_disks(self):
-        """Refresh disk list."""
-        try:
-            self.disk_list.delete(0, tk.END)
-            output = subprocess.check_output(["lsblk", "-o", "NAME,SIZE,MOUNTPOINT"], 
-                                           text=True)
-            for line in output.splitlines()[1:]:
-                if line.strip():
-                    self.disk_list.insert(tk.END, line.strip())
-        except:
-            pass
-
-    def mount_disk(self):
-        """Mount a disk."""
-        try:
-            selected = self.disk_list.get(self.disk_list.curselection()[0]).split()[0]
-            mountpoint = f"/mnt/{selected}"
-            os.makedirs(mountpoint, exist_ok=True)
-            subprocess.run(["sudo", "mount", f"/dev/{selected}", mountpoint], check=True)
-            self.wm.notifications.send("Disk Manager", f"Mounted {selected}")
-            self.refresh_disks()
-        except Exception as e:
-            self.wm.notifications.send("Disk Manager", f"Error: {str(e)}")
-
-    def unmount_disk(self):
-        """Unmount a disk."""
-        try:
-            selected = self.disk_list.get(self.disk_list.curselection()[0]).split()[0]
-            subprocess.run(["sudo", "umount", f"/dev/{selected}"], check=True)
-            self.wm.notifications.send("Disk Manager", f"Unmounted {selected}")
-            self.refresh_disks()
-        except Exception as e:
-            self.wm.notifications.send("Disk Manager", f"Error: {str(e)}")
-
-    def format_disk(self):
-        """Format a disk."""
-        try:
-            selected = self.disk_list.get(self.disk_list.curselection()[0]).split()[0]
-            if messagebox.askyesno("Confirm", f"Format /dev/{selected}? Data will be lost!"):
-                subprocess.run(["sudo", "mkfs.ext4", f"/dev/{selected}"], check=True)
-                self.wm.notifications.send("Disk Manager", f"Formatted {selected}")
-                self.refresh_disks()
-        except Exception as e:
-            self.wm.notifications.send("Disk Manager", f"Error: {str(e)}")
-
-### --- TERMINAL EMULATOR ---
-class TerminalEmulator:
-    """Terminal emulator using pty."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.process = None
-        self.master_fd = None
-
-    def initialize(self):
-        self.wm.create_window("Terminal", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the terminal UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Clear", command=self.clear_terminal, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(toolbar, text="Close", command=self.close, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-
-            # Terminal text
-            self.text = tk.Text(frame, bg="black", fg="white", font=("Monospace", 12), 
-                               insertbackground="white")
-            self.text.pack(fill=tk.BOTH, expand=True)
-            self.text.bind("<Key>", self.handle_input)
-            
-            # Start bash
-            self.master_fd, slave_fd = pty.openpty()
-            self.process = subprocess.Popen(["bash"], stdin=slave_fd, stdout=slave_fd, 
-                                          stderr=slave_fd, text=True, bufsize=1)
-            os.close(slave_fd)
-            
-            # Non-blocking read
-            fl = fcntl.fcntl(self.master_fd, fcntl.F_GETFL)
-            fcntl.fcntl(self.master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
-            
-            self.read_output()
-        except Exception as e:
-            pass
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def handle_input(self, event):
-        """Handle terminal input."""
-        try:
-            if event.keysym == "Return":
-                self.text.insert(tk.END, "\n")
-                os.write(self.master_fd, b"\n")
-            elif event.char:
-                os.write(self.master_fd, event.char.encode())
-            return "break"
-        except:
-            return "break"
-
-    def read_output(self):
-        """Read terminal output."""
-        try:
-            data = os.read(self.master_fd, 1024).decode(errors='ignore')
-            self.text.insert(tk.END, data)
-            self.text.see(tk.END)
-        except:
-            pass
-        if self.process and self.process.poll() is None:
-            self.wm.root.after(100, self.read_output)
-
-    def clear_terminal(self):
-        """Clear terminal text."""
-        try:
-            self.text.delete(1.0, tk.END)
-        except:
-            pass
-
-    def close(self):
-        """Close the terminal."""
-        if self.process:
-            try:
-                self.process.terminate()
-                os.close(self.master_fd)
-            except:
-                pass
-
-### --- SYSTEM MONITOR WIDGET ---
-class SystemMonitorWidget:
-    """Display system resources."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.visible = False
-        self.window = None
-
-    def toggle(self):
-        if not self.visible:
-            self.window = self.wm.create_window("System Monitor", self.build_ui, 
-                                              width=300, height=200)
-            self.visible = True
-        else:
-            self.wm.close_window(self.window)
-            self.visible = False
-            self.window = None
-
-    def build_ui(self, frame):
-        """Build the system monitor UI."""
-        try:
-            self.cpu_label = tk.Label(frame, text="CPU: 0%", fg="white", bg="#333333")
-            self.cpu_label.pack(pady=5)
-            self.mem_label = tk.Label(frame, text="Memory: 0%", fg="white", bg="#333333")
-            self.mem_label.pack(pady=5)
-            self.update_stats()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def update_stats(self):
-        """Update system stats."""
-        try:
-            cpu = psutil.cpu_percent()
-            mem = psutil.virtual_memory().percent
-            self.cpu_label.config(text=f"CPU: {cpu:.1f}%")
-            self.mem_label.config(text=f"Memory: {mem:.1f}%")
-            if self.visible:
-                self.wm.root.after(1000, self.update_stats)
-        except:
-            pass
-
-### --- SCREENSHOT UTILITY ---
-class ScreenshotUtility:
-    """Capture screenshots."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def take_screenshot(self):
-        """Capture a screenshot."""
-        try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = f"{os.environ['HOME']}/screenshot_{timestamp}.png"
-            subprocess.run(["scrot", path], check=True)
-            self.wm.notifications.send("Screenshot", f"Saved to {path}")
-            self.wm.add_desktop_shortcut(path, 100, 100)
-        except Exception as e:
-            self.wm.notifications.send("Screenshot", f"Error: {str(e)}")
-
-### --- SESSION MANAGER ---
-class SessionManager:
-    """Manage user sessions and authentication."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.users = {}
-        self.current_user = None
-        self.load_users()
-
-    def load_users(self):
-        """Load user data."""
-        try:
-            user_file = os.path.expanduser("~/.berke0s/users.json")
-            if os.path.exists(user_file):
-                with open(user_file, 'r') as f:
-                    self.users = json.load(f)
-        except:
-            pass
-
-    def save_users(self):
-        """Save user data."""
-        try:
-            user_file = os.path.expanduser("~/.berke0s/users.json")
-            os.makedirs(os.path.dirname(user_file), exist_ok=True)
-            with open(user_file, 'w') as f:
-                json.dump(self.users, f)
-        except:
-            pass
-
-    def add_user(self, username, hashed_password):
-        """Add a user."""
-        self.users[username] = hashed_password
-        self.save_users()
-
-    def remove_user(self, username):
-        """Remove a user."""
-        if username in self.users:
-            del self.users[username]
-            self.save_users()
-
-    def update_password(self, username, hashed_password):
-        """Update user password."""
-        if username in self.users:
-            self.users[username] = hashed_password
-            self.save_users()
-
-    def authenticate(self, username, password):
-        """Authenticate a user."""
-        try:
-            if username in self.users:
-                return bcrypt.checkpw(password.encode(), self.users[username].encode())
-            return False
-        except:
-            return False
-
-    def login(self, username):
-        """Set current user."""
-        self.current_user = username
-        self.wm.config["current_user"] = username
-        self.wm.save_config()
-
-    def logout(self):
-        """Log out current user."""
-        self.current_user = None
-        self.wm.config["current_user"] = None
-        self.wm.save_config()
-        self.wm.show_login()
-
-### --- SYSTEM TRAY ---
-class SystemTray:
-    """System tray with clock and status."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.tray = None
-
-    def build_ui(self, parent):
-        """Build the system tray."""
-        try:
-            self.tray = tk.Frame(parent, bg="#333333")
-            self.tray.pack(side=tk.RIGHT, padx=5)
-            self.clock = tk.Label(self.tray, fg="white", bg="#333333", font=("Arial", 10))
-            self.clock.pack(side=tk.RIGHT)
-            self.network = tk.Label(self.tray, text="No Network", fg="white", bg="#333333")
-            self.network.pack(side=tk.RIGHT, padx=5)
-            self.battery = tk.Label(self.tray, text="N/A", fg="white", bg="#333333")
-            self.battery.pack(side=tk.RIGHT, padx=5)
-            self.update_status()
-        except Exception as e:
-            self.wm.notifications.send("System Tray", f"Error: {str(e)}")
-
-    def update_status(self):
-        """Update tray status."""
-        try:
-            # Clock
-            self.clock.config(text=datetime.datetime.now().strftime("%H:%M:%S %d/%m/%Y"))
-            
-            # Network
-            output = subprocess.check_output(["ip", "addr"], text=True)
-            net = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+/\d+)', output)
-            self.network.config(text=net.group(1) if net else "No Network")
-            
-            # Battery
-            if os.path.exists("/sys/class/power_supply/BAT0/capacity"):
-                with open("/sys/class/power_supply/BAT0/capacity", 'r') as f:
-                    self.battery.config(text=f"{f.read().strip()}%")
-            else:
-                self.battery.config(text="N/A")
-                
-            self.wm.root.after(1000, self.update_status)
-        except:
-            pass
-
-### --- BACKUP UTILITY ---
-class BackupUtility:
-    """Backup and restore user settings."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Backup Utility", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the backup UI."""
-        try:
-            tk.Label(frame, text="Backup and Restore", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(frame, text="Backup Settings", command=self.backup, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Restore Settings", command=self.restore, 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def backup(self):
-        """Backup user settings."""
-        try:
-            backup_dir = os.path.expanduser("~/.berke0s/backups")
-            os.makedirs(backup_dir, exist_ok=True)
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(backup_dir, f"backup_{timestamp}.tar.gz")
-            subprocess.run(["tar", "-czf", backup_file, 
-                           os.path.expanduser("~/.berke0s/config.json"), 
-                           os.path.expanduser("~/.berke0s/session.json"), 
-                           os.path.expanduser("~/.berke0s/users.json")], 
-                          check=True)
-            self.wm.notifications.send("Backup", f"Backup created: {backup_file}")
-        except Exception as e:
-            self.wm.notifications.send("Backup", f"Error: {str(e)}")
-
-    def restore(self):
-        """Restore user settings."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Tar", "*.tar.gz")])
-            if filename:
-                subprocess.run(["tar", "-xzf", filename, "-C", os.path.expanduser("~/.berke0s")], 
-                              check=True)
-                self.wm.notifications.send("Backup", "Settings restored")
-                self.wm.load_config()
-        except Exception as e:
-            self.wm.notifications.send("Backup", f"Error: {str(e)}")
-
-### --- UTILITY FUNCTIONS ---
-def install_packages():
-    """Install required packages."""
-    try:
-        packages = ["python3.9", "tk", "tcl", "python3.9-pip", "alsa", "bluez", 
-                   "e2fsprogs", "nano", "htop", "bash", "tar", "zip", 
-                   "wireless-tools", "scrot", "libnotify", "espeak", "mpv", 
-                   "dillo", "flwm", "aterm", "feh", "mplayer", "pwgen", "bc"]
-        for pkg in packages:
-            subprocess.run(["sudo", "tce-load", "-wi", pkg], 
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["pip3", "install", "--user", "psutil", "Pillow", "bcrypt", "pygments"], 
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-def setup_autostart():
-    """Configure autostart."""
-    try:
-        with open("/opt/bootlocal.sh", "a") as f:
-            f.write("python3 /usr/local/bin/BERKE0S.py &\n")
-        subprocess.run(["sudo", "filetool.sh", "-b"], 
-                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except:
-        pass
-
-def load_config():
-    """Load configuration."""
-    try:
-        config_path = os.path.expanduser("~/.berke0s/config.json")
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        return {"theme": "dark", "language": "en", "taskbar_color": "#333333"}
-    except:
-        return {"theme": "dark", "language": "en", "taskbar_color": "#333333"}
-
-def load_session():
-    """Load session data."""
-    try:
-        session_path = os.path.expanduser("~/.berke0s/session.json")
-        if os.path.exists(session_path):
-            with open(session_path, 'r') as f:
-                return json.load(f)
-        return {"open_windows": []}
-    except:
-        return {"open_windows": []}
-
-### --- SPLASH SCREEN ---
-def show_splash(wm):
-    """Display splash screen."""
-    try:
-        splash = tk.Toplevel(wm.root)
-        splash.overrideredirect(True)
-        splash.geometry("300x200+{}+{}".format(
-            (wm.root.winfo_screenwidth() - 300) // 2,
-            (wm.root.winfo_screenheight() - 200) // 2
-        ))
-        tk.Label(splash, text="Berke0S\nLoading...", fg="white", bg="black", 
-                font=("Arial", 16)).pack(expand=True)
-        wm.root.after(3000, splash.destroy)
-    except:
-        pass
-
-### --- MAIN APPLICATION ---
-if __name__ == "__main__":
-    try:
-        # Install packages
-        install_packages()
+        # Start desktop environment
+        desktop = DesktopEnvironment()
         
-        # Setup autostart
-        setup_autostart()
-        
-        # Load config
-        config = load_config()
-        
-        # Initialize window manager
-        wm = WindowManager()
-        wm.notifications = NotificationSystem(wm)
-        wm.session_manager = SessionManager(wm)
-        wm.config = config
-        
-        # Show splash
-        show_splash(wm)
-        
-        # System tray
-        system_tray = SystemTray(wm)
-        system_tray.build_ui(wm.taskbar)
-        
-        # Initialize apps
-        file_manager = FileManager(wm)
-        text_editor = TextEditor(wm)
-        code_editor = CodeEditor(wm)
-        calculator = Calculator(wm)
-        web_browser = WebBrowser(wm)
-        system_info = SystemInfo(wm)
-        package_manager = PackageManager(wm)
-        task_manager = TaskManager(wm)
-        media_player = MediaPlayer(wm)
-        image_viewer = ImageViewer(wm)
-        presentation = PresentationApp(wm)
-        control_center = ControlCenter(wm)
-        disk_manager = DiskManager(wm)
-        terminal = TerminalEmulator(wm)
-        system_monitor = SystemMonitorWidget(wm)
-        screenshot = ScreenshotUtility(wm)
-        backup = BackupUtility(wm)
-        
-        # Assign apps to window manager for file handling
-        wm.file_manager = file_manager
-        wm.text_editor = text_editor
-        wm.code_editor = code_editor
-        wm.media_player = media_player
-        wm.image_viewer = image_viewer
-        wm.presentation = presentation
-        
-        # Start menu
-        def show_start_menu(event):
-            """Display the start menu with application options."""
-            try:
-                menu = tk.Menu(wm.root, tearoff=0, bg="#333333", fg="white")
-                apps = {
-                    "File Manager": file_manager.open,
-                    "Text Editor": text_editor.open,
-                    "Code Editor": code_editor.open,
-                    "Calculator": calculator.open,
-                    "Web Browser": web_browser.open,
-                    "System Info": system_info.open,
-                    "Package Manager": package_manager.open,
-                    "Task Manager": task_manager.open,
-                    "Media Player": lambda: media_player.play(os.path.expanduser("~/test.mp3")),
-                    "Image Viewer": lambda: image_viewer.open_file(os.path.expanduser("~/test.png")),
-                    "Presentation": presentation.open,
-                    "Control Center": control_center.open,
-                    "Disk Manager": disk_manager.open,
-                    "Terminal": terminal.initialize,
-                    "System Monitor": system_monitor.toggle,
-                    "Screenshot": screenshot.take_screenshot,
-                    "Backup Utility": backup.open
-                }
-                for name, cmd in apps.items():
-                    menu.add_command(label=name, command=cmd)
-                menu.add_separator()
-                menu.add_command(label="Shutdown", command=wm.shutdown)
-                menu.add_command(label="Reboot", command=wm.reboot)
-                menu.add_command(label="Log Out", command=wm.logout)
-                menu.post(wm.start_btn.winfo_rootx(), wm.start_btn.winfo_rooty() - 150)
-            except Exception as e:
-                wm.notifications.send("Start Menu", f"Error: {str(e)}")
-        
-        wm.start_btn.bind("<Button-1>", show_start_menu)
-        
-        # Desktop context menu
-        def show_desktop_menu(event):
-            """Display context menu on desktop right-click."""
-            try:
-                menu = tk.Menu(wm.root, tearoff=0, bg="#333333", fg="white")
-                menu.add_command(label="New Folder", command=lambda: file_manager.create_folder())
-                menu.add_command(label="New Text File", command=lambda: text_editor.new_file())
-                menu.add_command(label="Open Terminal", command=terminal.initialize)
-                menu.add_separator()
-                menu.add_command(label="Control Center", command=control_center.open)
-                menu.post(event.x_root, event.y_root)
-            except Exception as e:
-                wm.notifications.send("Desktop", f"Error: {str(e)}")
-        
-        wm.desktop.bind("<Button-3>", show_desktop_menu)
-        
-        # Keyboard shortcuts
-        def handle_shortcuts(event):
-            """Handle global keyboard shortcuts."""
-            try:
-                if event.keysym == 't' and event.state & 0x4 and event.state & 0x1:  # Ctrl+Alt+T
-                    terminal.initialize()
-                elif event.keysym == 'f' and event.state & 0x4:  # Ctrl+F
-                    file_manager.open()
-                elif event.keysym == 'e' and event.state & 0x4:  # Ctrl+E
-                    code_editor.open()
-            except:
-                pass
-        
-        wm.root.bind("<KeyPress>", handle_shortcuts)
-        
-        # Restore session
-        session = load_session()
-        for win in session["open_windows"]:
-            try:
-                wm.create_window(win["title"], 
-                                lambda f: tk.Label(f, text="Restored Window", fg="white", 
-                                                  bg="#333333").pack(),
-                                x=win["x"], y=win["y"], width=win["width"], height=win["height"])
-            except:
-                pass
-        
-        # Apply saved configuration
-        wm.load_config()
-        
-        # Show login screen
-        wm.show_login()
-        
-        # Main loop
-        wm.root.mainloop()
+    except KeyboardInterrupt:
+        print("\nBerke0S interrupted by user")
+        sys.exit(0)
     except Exception as e:
         print(f"Fatal error: {str(e)}")
-    finally:
-        wm.cleanup()
+        logging.error(f"Fatal error: {e}")
         sys.exit(1)
 
-### --- WINDOW MANAGER ---
-class WindowManager:
-    """Manage windows, desktop, and system resources."""
-    def __init__(self):
-        """Initialize the window manager."""
-        self.root = tk.Tk()
-        self.root.title("Berke0S")
-        self.root.attributes('-fullscreen', True)
-        self.root.configure(bg="#333333")
-        self.windows = {}
-        self.notifications = None
-        self.session_manager = None
-        self.config = load_config()
-        self.taskbar = None
-        self.start_btn = None
-        self.desktop = None
-        self.background_video = None
-        self.shortcuts = {}
-        self.file_associations = {
-            '.txt': self.text_editor,
-            '.py': self.code_editor,
-            '.sh': self.code_editor,
-            '.png': self.image_viewer,
-            '.jpg': self.image_viewer,
-            '.mp3': self.media_player,
-            '.mp4': self.media_player
-        }
-        self.current_user = None
-        self.setup_ui()
-        self.setup_file_associations()
-
-    def setup_ui(self):
-        """Set up the main UI components."""
-        try:
-            # Taskbar
-            self.taskbar = tk.Frame(self.root, bg=self.config.get("taskbar_color", "#333333"), height=30)
-            self.taskbar.pack(side=tk.BOTTOM, fill=tk.X)
-            
-            # Start button
-            self.start_btn = tk.Button(self.taskbar, text="Start", fg="white", 
-                                      bg="#555555", relief=tk.RAISED)
-            self.start_btn.pack(side=tk.LEFT, padx=5)
-            
-            # Desktop
-            self.desktop = tk.Canvas(self.root, bg="#333333", highlightthickness=0)
-            self.desktop.pack(fill=tk.BOTH, expand=True)
-            self.desktop.bind("<B1-Motion>", self.drag_shortcut)
-            self.desktop.bind("<ButtonRelease-1>", self.drop_shortcut)
-            
-            # Load background
-            if "background" in self.config:
-                subprocess.run(["feh", "--bg-scale", self.config["background"]], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if "background_video" in self.config:
-                self.background_video = subprocess.Popen(
-                    ["mplayer", "-vo", "x11", "-loop", "0", self.config["background_video"]], 
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # Apply theme
-            theme = self.config.get("theme", "dark")
-            colors = {"dark": {"bg": "#333333", "fg": "white", "entry": "#555555"}, 
-                     "light": {"bg": "#f0f0f0", "fg": "black", "entry": "#ffffff"}}
-            self.apply_theme(colors[theme])
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-
-    def setup_file_associations(self):
-        """Load file associations from config."""
-        try:
-            assoc_file = os.path.expanduser("~/.berke0s/file_associations.json")
-            if os.path.exists(assoc_file):
-                with open(assoc_file, 'r') as f:
-                    self.file_associations.update(json.load(f))
-        except:
-            pass
-
-    def save_file_associations(self):
-        """Save file associations."""
-        try:
-            assoc_file = os.path.expanduser("~/.berke0s/file_associations.json")
-            os.makedirs(os.path.dirname(assoc_file), exist_ok=True)
-            with open(assoc_file, 'w') as f:
-                json.dump(self.file_associations, f)
-        except:
-            pass
-
-    def create_window(self, title, build_func, x=100, y=100, width=400, height=300):
-        """Create a new window."""
-        try:
-            window = tk.Toplevel(self.root)
-            window.title(title)
-            window.geometry(f"{width}x{height}+{x}+{y}")
-            window.configure(bg="#333333")
-            frame = tk.Frame(window, bg="#333333")
-            frame.pack(fill=tk.BOTH, expand=True)
-            build_func(frame)
-            self.windows[window] = {"title": title, "x": x, "y": y, "width": width, "height": height}
-            window.protocol("WM_DELETE_WINDOW", lambda: self.close_window(window))
-            return window
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-            return None
-
-    def close_window(self, window):
-        """Close a window."""
-        try:
-            if window in self.windows:
-                del self.windows[window]
-                window.destroy()
-                self.save_session()
-        except:
-            pass
-
-    def add_desktop_shortcut(self, path, x, y):
-        """Add a shortcut to the desktop."""
-        try:
-            name = os.path.basename(path)
-            shortcut_id = self.desktop.create_text(x, y, text=name, fill="white", 
-                                                 font=("Arial", 10), anchor=tk.NW)
-            self.shortcuts[shortcut_id] = {"path": path, "x": x, "y": y}
-            self.desktop.tag_bind(shortcut_id, "<Button-1>", 
-                                 lambda e: self.start_drag(shortcut_id))
-            self.desktop.tag_bind(shortcut_id, "<Double-1>", 
-                                 lambda e: self.open_shortcut(shortcut_id))
-            self.desktop.tag_bind(shortcut_id, "<Button-3>", 
-                                 lambda e: self.show_shortcut_menu(shortcut_id, e))
-            self.save_shortcuts()
-        except Exception as e:
-            self.notifications.send("Desktop", f"Error: {str(e)}")
-
-    def start_drag(self, shortcut_id):
-        """Start dragging a shortcut."""
-        try:
-            self.dragging = shortcut_id
-        except:
-            pass
-
-    def drag_shortcut(self, event):
-        """Drag a shortcut."""
-        try:
-            if hasattr(self, "dragging"):
-                self.desktop.coords(self.dragging, event.x, event.y)
-        except:
-            pass
-
-    def drop_shortcut(self, event):
-        """Drop a shortcut."""
-        try:
-            if hasattr(self, "dragging"):
-                self.shortcuts[self.dragging]["x"] = event.x
-                self.shortcuts[self.dragging]["y"] = event.y
-                delattr(self, "dragging")
-                self.save_shortcuts()
-        except:
-            pass
-
-    def show_shortcut_menu(self, shortcut_id, event):
-        """Show context menu for a shortcut."""
-        try:
-            menu = tk.Menu(self.root, tearoff=0, bg="#333333", fg="white")
-            menu.add_command(label="Open", 
-                            command=lambda: self.open_shortcut(shortcut_id))
-            menu.add_command(label="Delete", 
-                            command=lambda: self.delete_shortcut(shortcut_id))
-            menu.post(event.x_root, event.y_root)
-        except:
-            pass
-
-    def open_shortcut(self, shortcut_id):
-        """Open a shortcut."""
-        try:
-            path = self.shortcuts[shortcut_id]["path"]
-            if os.path.isdir(path):
-                self.file_manager.current_path = path
-                self.file_manager.open()
-            else:
-                self.open_file(path)
-        except Exception as e:
-            self.notifications.send("Desktop", f"Error: {str(e)}")
-
-    def delete_shortcut(self, shortcut_id):
-        """Delete a shortcut."""
-        try:
-            self.desktop.delete(shortcut_id)
-            del self.shortcuts[shortcut_id]
-            self.save_shortcuts()
-        except:
-            pass
-
-    def save_shortcuts(self):
-        """Save shortcut positions."""
-        try:
-            shortcut_file = os.path.expanduser("~/.berke0s/shortcuts.json")
-            os.makedirs(os.path.dirname(shortcut_file), exist_ok=True)
-            with open(shortcut_file, 'w') as f:
-                json.dump(self.shortcuts, f)
-        except:
-            pass
-
-    def load_shortcuts(self):
-        """Load shortcuts."""
-        try:
-            shortcut_file = os.path.expanduser("~/.berke0s/shortcuts.json")
-            if os.path.exists(shortcut_file):
-                with open(shortcut_file, 'r') as f:
-                    self.shortcuts = json.load(f)
-                for shortcut_id, data in list(self.shortcuts.items()):
-                    if os.path.exists(data["path"]):
-                        self.add_desktop_shortcut(data["path"], data["x"], data["y"])
-                    else:
-                        del self.shortcuts[shortcut_id]
-        except:
-            pass
-
-    def open_file(self, path):
-        """Open a file based on its extension."""
-        try:
-            ext = os.path.splitext(path)[1].lower()
-            if ext in self.file_associations:
-                app = self.file_associations[ext]
-                if hasattr(app, "open_file"):
-                    app.open_file(path)
-                else:
-                    app.open()
-            elif ext in ['.c', '.cpp']:
-                self.code_editor.open_file(path)
-            elif ext in ['.avi']:
-                self.media_player.play(path)
-            else:
-                self.text_editor.open_file(path)
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error opening file: {str(e)}")
-
-    def apply_theme(self, colors):
-        """Apply theme to UI."""
-        try:
-            self.root.configure(bg=colors["bg"])
-            self.desktop.configure(bg=colors["bg"])
-            self.taskbar.configure(bg=self.config.get("taskbar_color", colors["bg"]))
-            for window in self.windows:
-                window.configure(bg=colors["bg"])
-                for widget in window.winfo_children():
-                    if isinstance(widget, (tk.Frame, tk.Label, tk.Button)):
-                        widget.configure(bg=colors["bg"], fg=colors["fg"])
-                    elif isinstance(widget, tk.Entry):
-                        widget.configure(bg=colors["entry"], fg=colors["fg"])
-        except:
-            pass
-
-    def save_config(self):
-        """Save configuration."""
-        try:
-            config_path = os.path.expanduser("~/.berke0s/config.json")
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with open(config_path, 'w') as f:
-                json.dump(self.config, f)
-        except:
-            pass
-
-    def load_config(self):
-        """Load and apply configuration."""
-        try:
-            self.config = load_config()
-            theme = self.config.get("theme", "dark")
-            colors = {"dark": {"bg": "#333333", "fg": "white", "entry": "#555555"}, 
-                     "light": {"bg": "#f0f0f0", "fg": "black", "entry": "#ffffff"}}
-            self.apply_theme(colors[theme])
-            if "taskbar_color" in self.config:
-                self.taskbar.configure(bg=self.config["taskbar_color"])
-            if "background" in self.config:
-                subprocess.run(["feh", "--bg-scale", self.config["background"]], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if "background_video" in self.config:
-                self.stop_background_video()
-                self.background_video = subprocess.Popen(
-                    ["mplayer", "-vo", "x11", "-loop", "0", self.config["background_video"]], 
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.load_shortcuts()
-        except:
-            pass
-
-    def save_session(self):
-        """Save session data."""
-        try:
-            session = {"open_windows": []}
-            for window, data in self.windows.items():
-                session["open_windows"].append({
-                    "title": data["title"],
-                    "x": window.winfo_x(),
-                    "y": window.winfo_y(),
-                    "width": window.winfo_width(),
-                    "height": window.winfo_height()
-                })
-            session_path = os.path.expanduser("~/.berke0s/session.json")
-            os.makedirs(os.path.dirname(session_path), exist_ok=True)
-            with open(session_path, 'w') as f:
-                json.dump(session, f)
-        except:
-            pass
-
-    def stop_background_video(self):
-        """Stop background video."""
-        if self.background_video:
-            try:
-                self.background_video.terminate()
-                self.background_video = None
-            except:
-                pass
-
-    def show_login(self):
-        """Show the login screen."""
-        try:
-            if self.session_manager.current_user:
-                self.logout()
-            for window in list(self.windows.keys()):
-                self.close_window(window)
-            login = LoginManager(self, self.config)
-            login.show_login()
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-
-    def shutdown(self):
-        """Shutdown the system."""
-        try:
-            self.cleanup()
-            subprocess.run(["sudo", "poweroff"], stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        except:
-            pass
-
-    def reboot(self):
-        """Reboot the system."""
-        try:
-            self.cleanup()
-            subprocess.run(["sudo", "reboot"], stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-        except:
-            pass
-
-    def logout(self):
-        """Log out the current user."""
-        try:
-            self.session_manager.logout()
-            self.show_login()
-        except:
-            pass
-
-    def cleanup(self):
-        """Clean up resources."""
-        try:
-            self.stop_background_video()
-            for window in list(self.windows.keys()):
-                window.destroy()
-            self.save_session()
-            self.save_config()
-        except:
-            pass
-
-### --- LOGIN MANAGER ---
-class LoginManager:
-    """Handle user login and authentication."""
-    def __init__(self, wm, config):
-        self.wm = wm
-        self.config = config
-        self.login_window = None
-
-    def show_login(self):
-        """Display the login screen."""
-        try:
-            self.login_window = tk.Toplevel(self.wm.root)
-            self.login_window.title("Berke0S Login")
-            self.login_window.geometry("400x300+{}+{}".format(
-                (self.wm.root.winfo_screenwidth() - 400) // 2,
-                (self.wm.root.winfo_screenheight() - 300) // 2
-            ))
-            self.login_window.overrideredirect(True)
-            self.login_window.configure(bg="#333333")
-            
-            # UI elements
-            tk.Label(self.login_window, text="Berke0S", fg="white", bg="#333333", 
-                    font=("Arial", 20)).pack(pady=20)
-            
-            tk.Label(self.login_window, text="Username", fg="white", bg="#333333").pack()
-            self.username_var = tk.StringVar()
-            username_entry = tk.Entry(self.login_window, textvariable=self.username_var, 
-                                    bg="#555555", fg="white")
-            username_entry.pack(pady=5)
-            username_entry.bind("<Return>", lambda e: password_entry.focus())
-            
-            tk.Label(self.login_window, text="Password", fg="white", bg="#333333").pack()
-            self.password_var = tk.StringVar()
-            password_entry = tk.Entry(self.login_window, textvariable=self.password_var, 
-                                     show="*", bg="#555555", fg="white")
-            password_entry.pack(pady=5)
-            password_entry.bind("<Return>", lambda e: self.attempt_login())
-            
-            tk.Button(self.login_window, text="Login", command=self.attempt_login, 
-                     bg="#555555", fg="white").pack(pady=10)
-            
-            # Populate username dropdown
-            users = list(self.wm.session_manager.users.keys())
-            if users:
-                self.username_var.set(users[0])
-            
-            username_entry.focus()
-        except Exception as e:
-            self.wm.notifications.send("Login", f"Error: {str(e)}")
-
-    def attempt_login(self):
-        """Attempt to log in."""
-        try:
-            username = self.username_var.get()
-            password = self.password_var.get()
-            if self.wm.session_manager.authenticate(username, password):
-                self.wm.session_manager.login(username)
-                self.login_window.destroy()
-                self.wm.notifications.send("Login", f"Welcome, {username}!")
-                self.wm.load_shortcuts()
-            else:
-                self.wm.notifications.send("Login", "Invalid credentials")
-                self.password_var.set("")
-        except Exception as e:
-            self.wm.notifications.send("Login", f"Error: {str(e)}")
-
-### --- FILE ASSOCIATION EDITOR ---
-class FileAssociationEditor:
-    """Edit file associations."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("File Associations", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the file association editor UI."""
-        try:
-            tk.Label(frame, text="File Associations", fg="white", bg="#333333").pack(pady=5)
-            self.assoc_list = tk.Listbox(frame, bg="#555555", fg="white")
-            self.assoc_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Add Association", command=self.add_association, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Remove Association", command=self.remove_association, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_associations()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_associations(self):
-        """Refresh the association list."""
-        try:
-            self.assoc_list.delete(0, tk.END)
-            for ext, app in self.wm.file_associations.items():
-                app_name = app.__class__.__name__
-                self.assoc_list.insert(tk.END, f"{ext} -> {app_name}")
-        except:
-            pass
-
-    def add_association(self):
-        """Add a new file association."""
-        try:
-            ext = simpledialog.askstring("Add Association", "File extension (e.g., .txt):")
-            if not ext:
-                return
-            apps = {
-                "Text Editor": self.wm.text_editor,
-                "Code Editor": self.wm.code_editor,
-                "Media Player": self.wm.media_player,
-                "Image Viewer": self.wm.image_viewer
-            }
-            app_name = simpledialog.askstring("Add Association", 
-                                             f"Choose app ({', '.join(apps.keys())}):")
-            if app_name in apps:
-                self.wm.file_associations[ext] = apps[app_name]
-                self.wm.save_file_associations()
-                self.refresh_associations()
-                self.wm.notifications.send("File Associations", f"Added {ext} -> {app_name}")
-        except Exception as e:
-            self.wm.notifications.send("File Associations", f"Error: {str(e)}")
-
-    def remove_association(self):
-        """Remove a file association."""
-        try:
-            selected = self.assoc_list.get(self.assoc_list.curselection()[0])
-            ext = selected.split(" -> ")[0]
-            if ext in self.wm.file_associations:
-                del self.wm.file_associations[ext]
-                self.wm.save_file_associations()
-                self.refresh_associations()
-                self.wm.notifications.send("File Associations", f"Removed {ext}")
-        except Exception as e:
-            self.wm.notifications.send("File Associations", f"Error: {str(e)}")
-
-### --- SYSTEM UPDATER ---
-class SystemUpdater:
-    """Check and apply system updates."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("System Updater", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the system updater UI."""
-        try:
-            tk.Label(frame, text="System Updater", fg="white", bg="#333333").pack(pady=5)
-            self.status_label = tk.Label(frame, text="Checking for updates...", 
-                                        fg="white", bg="#333333")
-            self.status_label.pack(pady=5)
-            tk.Button(frame, text="Update Now", command=self.update_system, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.check_updates()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def check_updates(self):
-        """Check for system updates."""
-        try:
-            subprocess.run(["sudo", "tce-update"], stdout=subprocess.DEVNULL, 
-                          stderr=subprocess.DEVNULL)
-            self.status_label.config(text="System is up to date")
-        except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)}")
-
-    def update_system(self):
-        """Apply system updates."""
-        try:
-            self.status_label.config(text="Updating system...")
-            subprocess.run(["sudo", "tce-update"], check=True)
-            self.wm.notifications.send("System Updater", "System updated successfully")
-            self.status_label.config(text="System updated")
-        except Exception as e:
-            self.wm.notifications.send("System Updater", f"Error: {str(e)}")
-            self.status_label.config(text=f"Error: {str(e)}")
-
-### --- ENHANCED PRESENTATION APP ---
-class PresentationApp:
-    """Enhanced presentation application with text editing."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.slides = []
-        self.current_slide = 0
-        self.photos = []
-
-    def open(self):
-        self.wm.create_window("Presentation", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the presentation UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Add Slide", command=self.add_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Next", command=self.next_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Previous", command=self.prev_slide, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Add Image", command=self.add_image, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save Presentation", command=self.save_presentation, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Load Presentation", command=self.load_presentation, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-
-            # Main content
-            main_frame = tk.Frame(frame, bg="#333333")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Slide canvas
-            self.canvas = tk.Canvas(main_frame, bg="#333333", width=400, height=300)
-            self.canvas.pack(side=tk.LEFT, padx=5)
-            
-            # Text editor
-            text_frame = tk.Frame(main_frame, bg="#333333")
-            text_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-            tk.Label(text_frame, text="Slide Text", fg="white", bg="#333333").pack()
-            self.text_editor = tk.Text(text_frame, bg="#555555", fg="white", 
-                                      font=("Arial", 12), height=10)
-            self.text_editor.pack(fill=tk.BOTH, expand=True, padx=5)
-            tk.Button(text_frame, text="Apply Text", command=self.apply_text, 
-                     bg="#555555", fg="white").pack(pady=5)
-            
-            self.add_slide()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def add_slide(self):
-        """Add a new slide."""
-        try:
-            self.slides.append({"image": None, "text": ""})
-            self.current_slide = len(self.slides) - 1
-            self.update_slide()
-        except:
-            pass
-
-    def add_image(self):
-        """Add an image to the current slide."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Images", "*.png *.jpg")])
-            if filename:
-                self.slides[self.current_slide]["image"] = filename
-                self.update_slide()
-        except Exception as e:
-            self.wm.notifications.send("Presentation", f"Error: {str(e)}")
-
-    def apply_text(self):
-        """Apply text to the current slide."""
-        try:
-            self.slides[self.current_slide]["text"] = self.text_editor.get(1.0, tk.END).strip()
-            self.update_slide()
-        except:
-            pass
-
-    def next_slide(self):
-        """Go to next slide."""
-        try:
-            if self.current_slide < len(self.slides) - 1:
-                self.current_slide += 1
-                self.update_slide()
-        except:
-            pass
-
-    def prev_slide(self):
-        """Go to previous slide."""
-        try:
-            if self.current_slide > 0:
-                self.current_slide -= 1
-                self.update_slide()
-        except:
-            pass
-
-    def update_slide(self):
-        """Update the current slide display."""
-        try:
-            self.canvas.delete("all")
-            self.photos = []
-            slide = self.slides[self.current_slide]
-            if slide["image"]:
-                img = Image.open(slide["image"])
-                img = img.resize((400, 300), Image.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self.photos.append(photo)
-                self.canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-            self.canvas.create_text(200, 350, text=slide["text"], fill="white", 
-                                  font=("Arial", 12))
-            self.text_editor.delete(1.0, tk.END)
-            self.text_editor.insert(tk.END, slide["text"])
-        except:
-            pass
-
-    def save_presentation(self):
-        """Save the presentation."""
-        try:
-            filename = filedialog.asksaveasfilename(filetypes=[("Presentation", "*.pres")])
-            if filename:
-                with open(filename, 'w') as f:
-                    json.dump(self.slides, f)
-                self.wm.notifications.send("Presentation", "Presentation saved")
-        except Exception as e:
-            self.wm.notifications.send("Presentation", f"Error: {str(e)}")
-
-    def load_presentation(self):
-        """Load a presentation."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Presentation", "*.pres")])
-            if filename:
-                with open(filename, 'r') as f:
-                    self.slides = json.load(f)
-                self.current_slide = 0
-                self.update_slide()
-                self.wm.notifications.send("Presentation", "Presentation loaded")
-        except Exception as e:
-            self.wm.notifications.send("Presentation", f"Error: {str(e)}")
-
-### --- ENHANCED CODE EDITOR ---
-class CodeEditor:
-    """Enhanced code editor with debugging."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.filename = None
-        self.highlighter = None
-        self.debug_process = None
-
-    def open(self):
-        self.wm.create_window("Code Editor", self.build_ui, width=800, height=600)
-
-    def open_file(self, filename):
-        """Open a specific file."""
-        self.filename = filename
-        self.open()
-        self.load_file()
-
-    def build_ui(self, frame):
-        """Build the code editor UI."""
-        try:
-            # Menu bar
-            menubar = tk.Menu(frame)
-            file_menu = tk.Menu(menubar, tearoff=0, bg="#333333", fg="white")
-            file_menu.add_command(label="New", command=self.new_file)
-            file_menu.add_command(label="Open", command=self.open_dialog)
-            file_menu.add_command(label="Save", command=self.save_file)
-            file_menu.add_command(label="Save As", command=self.save_as)
-            file_menu.add_separator()
-            file_menu.add_command(label="Run", command=self.run_code)
-            file_menu.add_command(label="Debug", command=self.debug_code)
-            menubar.add_cascade(label="File", menu=file_menu)
-            self.wm.root.config(menu=menubar)
-
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="New", command=self.new_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Open", command=self.open_dialog, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save", command=self.save_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Run", command=self.run_code, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Debug", command=self.debug_code, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            language_var = tk.StringVar(value="Python")
-            tk.OptionMenu(toolbar, language_var, "Python", "Bash", "C", 
-                         command=self.update_highlighter).pack(side=tk.LEFT, padx=2)
-
-            # Editor and output
-            main_frame = tk.Frame(frame, bg="#333333")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-            self.editor = tk.Text(main_frame, bg="#2e2e2e", fg="white", 
-                                font=("Monospace", 12), insertbackground="white")
-            self.editor.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-            self.output = tk.Text(main_frame, bg="#2e2e2e", fg="white", 
-                                font=("Monospace", 12), height=10)
-            self.output.pack(fill=tk.X, side=tk.BOTTOM)
-            scrollbar = tk.Scrollbar(main_frame, command=self.editor.yview)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-            self.editor.config(yscrollcommand=scrollbar.set)
-
-            # Syntax highlighting
-            self.highlighter = PygmentsHighlighter(self.editor, "python")
-            self.editor.bind("<KeyRelease>", self.highlight_code)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def new_file(self):
-        """Create a new file."""
-        try:
-            self.filename = None
-            self.editor.delete(1.0, tk.END)
-            self.output.delete(1.0, tk.END)
-        except:
-            pass
-
-    def open_dialog(self):
-        """Open a file dialog."""
-        try:
-            filename = filedialog.askopenfilename()
-            if filename:
-                self.filename = filename
-                self.load_file()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def load_file(self):
-        """Load file content."""
-        try:
-            with open(self.filename, 'r') as f:
-                content = f.read()
-            self.editor.delete(1.0, tk.END)
-            self.editor.insert(tk.END, content)
-            ext = os.path.splitext(self.filename)[1].lower()
-            self.update_highlighter(ext[1:] if ext else "python")
-            self.highlight_code()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def save_file(self):
-        """Save the current file."""
-        try:
-            if self.filename:
-                with open(self.filename, 'w') as f:
-                    f.write(self.editor.get(1.0, tk.END).strip())
-            else:
-                self.save_as()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def save_as(self):
-        """Save file with a new name."""
-        try:
-            filename = filedialog.asksaveasfilename()
-            if filename:
-                self.filename = filename
-                self.save_file()
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def run_code(self):
-        """Run the code."""
-        try:
-            code = self.editor.get(1.0, tk.END).strip()
-            self.output.delete(1.0, tk.END)
-            if not code:
-                return
-            ext = os.path.splitext(self.filename or "")[1].lower() if self.filename else ".py"
-            if ext == ".py":
-                process = subprocess.run(["python3", "-"], input=code, text=True, 
-                                       capture_output=True)
-                self.output.insert(tk.END, process.stdout + process.stderr)
-            elif ext == ".sh":
-                process = subprocess.run(["bash", "-c", code], text=True, 
-                                       capture_output=True)
-                self.output.insert(tk.END, process.stdout + process.stderr)
-            elif ext == ".c":
-                with open("/tmp/temp.c", "w") as f:
-                    f.write(code)
-                process = subprocess.run(["gcc", "/tmp/temp.c", "-o", "/tmp/temp"], 
-                                       text=True, capture_output=True)
-                if process.returncode == 0:
-                    run = subprocess.run(["/tmp/temp"], text=True, capture_output=True)
-                    self.output.insert(tk.END, run.stdout + run.stderr)
-                else:
-                    self.output.insert(tk.END, process.stderr)
-            else:
-                self.wm.notifications.send("Code Editor", "Unsupported file type")
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def debug_code(self):
-        """Debug the code (Python only)."""
-        try:
-            if self.debug_process:
-                self.debug_process.terminate()
-            code = self.editor.get(1.0, tk.END).strip()
-            self.output.delete(1.0, tk.END)
-            if not code:
-                return
-            if self.filename and self.filename.endswith('.py'):
-                with open("/tmp/debug.py", "w") as f:
-                    f.write(code)
-                self.debug_process = subprocess.Popen(
-                    ["python3", "-m", "pdb", "/tmp/debug.py"], 
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                stdout, stderr = self.debug_process.communicate()
-                self.output.insert(tk.END, stdout + stderr)
-            else:
-                self.wm.notifications.send("Code Editor", "Debugging only supported for Python")
-        except Exception as e:
-            self.wm.notifications.send("Code Editor", f"Error: {str(e)}")
-
-    def update_highlighter(self, language):
-        """Update syntax highlighter."""
-        try:
-            language = language.lower()
-            if language in ['py', 'python']:
-                self.highlighter = PygmentsHighlighter(self.editor, "python")
-            elif language in ['sh', 'bash']:
-                self.highlighter = PygmentsHighlighter(self.editor, "bash")
-            elif language in ['c', 'cpp']:
-                self.highlighter = PygmentsHighlighter(self.editor, "c")
-            self.highlight_code()
-        except:
-            pass
-
-    def highlight_code(self, event=None):
-        """Apply syntax highlighting."""
-        try:
-            self.highlighter.highlight()
-        except:
-            pass
-
-### --- EMAIL CLIENT ---
-class EmailClient:
-    """Simple email client using mutt and Python libraries."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.email_config = self.load_email_config()
-
-    def load_email_config(self):
-        """Load email configuration."""
-        try:
-            config_path = os.path.expanduser("~/.berke0s/email.json")
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    return json.load(f)
-            return {"smtp_server": "", "smtp_port": 587, "imap_server": "", "imap_port": 993, 
-                    "username": "", "password": ""}
-        except:
-            return {"smtp_server": "", "smtp_port": 587, "imap_server": "", "imap_port": 993, 
-                    "username": "", "password": ""}
-
-    def save_email_config(self):
-        """Save email configuration."""
-        try:
-            config_path = os.path.expanduser("~/.berke0s/email.json")
-            os.makedirs(os.path.dirname(config_path), exist_ok=True)
-            with open(config_path, 'w') as f:
-                json.dump(self.email_config, f)
-        except:
-            pass
-
-    def open(self):
-        self.wm.create_window("Email Client", self.build_ui, width=800, height=600)
-
-    def build_ui(self, frame):
-        """Build the email client UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Compose", command=self.compose_email, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Refresh", command=self.refresh_inbox, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Configure", command=self.configure_email, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-
-            # Inbox
-            self.inbox_list = tk.Listbox(frame, bg="#555555", fg="white", selectmode=tk.SINGLE)
-            self.inbox_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            self.inbox_list.bind('<Double-1>', self.read_email)
-            self.refresh_inbox()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_inbox(self):
-        """Refresh the inbox."""
-        try:
-            self.inbox_list.delete(0, tk.END)
-            if not all([self.email_config["imap_server"], self.email_config["username"], 
-                       self.email_config["password"]]):
-                self.wm.notifications.send("Email", "Please configure email settings")
-                return
-            mail = imaplib.IMAP4_SSL(self.email_config["imap_server"], self.email_config["imap_port"])
-            mail.login(self.email_config["username"], self.email_config["password"])
-            mail.select("INBOX")
-            _, data = mail.search(None, "ALL")
-            for num in data[0].split()[:10]:  # Limit to 10 emails
-                _, msg_data = mail.fetch(num, "(RFC822)")
-                email_msg = email.message_from_bytes(msg_data[0][1])
-                subject = email.header.decode_header(email_msg["Subject"])[0][0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode()
-                self.inbox_list.insert(tk.END, f"From: {email_msg['From']} | Subject: {subject}")
-            mail.logout()
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-    def compose_email(self):
-        """Compose a new email."""
-        try:
-            window = self.wm.create_window("Compose Email", lambda f: self.build_compose_ui(f), 
-                                         width=600, height=400)
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-    def build_compose_ui(self, frame):
-        """Build the compose email UI."""
-        try:
-            tk.Label(frame, text="To:", fg="white", bg="#333333").pack()
-            to_var = tk.StringVar()
-            tk.Entry(frame, textvariable=to_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="Subject:", fg="white", bg="#333333").pack()
-            subject_var = tk.StringVar()
-            tk.Entry(frame, textvariable=subject_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="Body:", fg="white", bg="#333333").pack()
-            body_text = tk.Text(frame, bg="#555555", fg="white", height=10)
-            body_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            
-            tk.Button(frame, text="Send", 
-                     command=lambda: self.send_email(to_var.get(), subject_var.get(), 
-                                                    body_text.get(1.0, tk.END).strip()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def send_email(self, to, subject, body):
-        """Send an email."""
-        try:
-            if not all([self.email_config["smtp_server"], self.email_config["username"], 
-                       self.email_config["password"]]):
-                self.wm.notifications.send("Email", "Please configure email settings")
-                return
-            msg = EmailMessage()
-            msg.set_content(body)
-            msg["Subject"] = subject
-            msg["From"] = self.email_config["username"]
-            msg["To"] = to
-            with smtplib.SMTP(self.email_config["smtp_server"], self.email_config["smtp_port"]) as server:
-                server.starttls()
-                server.login(self.email_config["username"], self.email_config["password"])
-                server.send_message(msg)
-            self.wm.notifications.send("Email", "Email sent successfully")
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-    def read_email(self, event):
-        """Read a selected email."""
-        try:
-            selected = self.inbox_list.get(self.inbox_list.curselection()[0])
-            mail = imaplib.IMAP4_SSL(self.email_config["imap_server"], self.email_config["imap_port"])
-            mail.login(self.email_config["username"], self.email_config["password"])
-            mail.select("INBOX")
-            _, data = mail.search(None, "ALL")
-            num = data[0].split()[self.inbox_list.curselection()[0]]
-            _, msg_data = mail.fetch(num, "(RFC822)")
-            email_msg = email.message_from_bytes(msg_data[0][1])
-            body = ""
-            if email_msg.is_multipart():
-                for part in email_msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode()
-                        break
-            else:
-                body = email_msg.get_payload(decode=True).decode()
-            mail.logout()
-            self.wm.create_window(f"Email: {selected}", 
-                                lambda f: tk.Text(f, bg="#555555", fg="white", 
-                                                 font=("Arial", 12)).insert(tk.END, body))
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-    def configure_email(self):
-        """Configure email settings."""
-        try:
-            window = self.wm.create_window("Email Settings", self.build_config_ui, 
-                                         width=400, height=300)
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-    def build_config_ui(self, frame):
-        """Build the email configuration UI."""
-        try:
-            tk.Label(frame, text="SMTP Server:", fg="white", bg="#333333").pack()
-            smtp_var = tk.StringVar(value=self.email_config["smtp_server"])
-            tk.Entry(frame, textvariable=smtp_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="SMTP Port:", fg="white", bg="#333333").pack()
-            smtp_port_var = tk.IntVar(value=self.email_config["smtp_port"])
-            tk.Entry(frame, textvariable=smtp_port_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="IMAP Server:", fg="white", bg="#333333").pack()
-            imap_var = tk.StringVar(value=self.email_config["imap_server"])
-            tk.Entry(frame, textvariable=imap_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="IMAP Port:", fg="white", bg="#333333").pack()
-            imap_port_var = tk.IntVar(value=self.email_config["imap_port"])
-            tk.Entry(frame, textvariable=imap_port_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="Username:", fg="white", bg="#333333").pack()
-            username_var = tk.StringVar(value=self.email_config["username"])
-            tk.Entry(frame, textvariable=username_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="Password:", fg="white", bg="#333333").pack()
-            password_var = tk.StringVar(value=self.email_config["password"])
-            tk.Entry(frame, textvariable=password_var, show="*", bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Button(frame, text="Save", 
-                     command=lambda: self.save_email_settings(smtp_var.get(), smtp_port_var.get(), 
-                                                            imap_var.get(), imap_port_var.get(), 
-                                                            username_var.get(), password_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def save_email_settings(self, smtp, smtp_port, imap, imap_port, username, password):
-        """Save email settings."""
-        try:
-            self.email_config.update({
-                "smtp_server": smtp, "smtp_port": smtp_port, 
-                "imap_server": imap, "imap_port": imap_port, 
-                "username": username, "password": password
-            })
-            self.save_email_config()
-            self.wm.notifications.send("Email", "Settings saved")
-        except Exception as e:
-            self.wm.notifications.send("Email", f"Error: {str(e)}")
-
-### --- CALENDAR APP ---
-class CalendarApp:
-    """Calendar with event scheduling."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.events = self.load_events()
-        self.current_date = datetime.datetime.now()
-
-    def load_events(self):
-        """Load events from file."""
-        try:
-            events_path = os.path.expanduser("~/.berke0s/events.json")
-            if os.path.exists(events_path):
-                with open(events_path, 'r') as f:
-                    return json.load(f)
-            return {}
-        except:
-            return {}
-
-    def save_events(self):
-        """Save events to file."""
-        try:
-            events_path = os.path.expanduser("~/.berke0s/events.json")
-            os.makedirs(os.path.dirname(events_path), exist_ok=True)
-            with open(events_path, 'w') as f:
-                json.dump(self.events, f)
-        except:
-            pass
-
-    def open(self):
-        self.wm.create_window("Calendar", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the calendar UI."""
-        try:
-            # Navigation
-            nav = tk.Frame(frame, bg="#333333")
-            nav.pack(fill=tk.X)
-            tk.Button(nav, text="<< Prev", command=self.prev_month, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.month_label = tk.Label(nav, text=self.current_date.strftime("%B %Y"), 
-                                       fg="white", bg="#333333")
-            self.month_label.pack(side=tk.LEFT, expand=True)
-            tk.Button(nav, text="Next >>", command=self.next_month, 
-                     bg="#555555", fg="white").pack(side=tk.RIGHT, padx=5)
-            tk.Button(nav, text="Add Event", command=self.add_event, 
-                     bg="#555555", fg="white").pack(side=tk.RIGHT, padx=5)
-
-            # Calendar grid
-            self.calendar_frame = tk.Frame(frame, bg="#333333")
-            self.calendar_frame.pack(fill=tk.BOTH, expand=True)
-            self.update_calendar()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def update_calendar(self):
-        """Update the calendar display."""
-        try:
-            for widget in self.calendar_frame.winfo_children():
-                widget.destroy()
-            cal = calendar.monthcalendar(self.current_date.year, self.current_date.month)
-            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            for day in days:
-                tk.Label(self.calendar_frame, text=day, fg="white", bg="#333333").grid(column=days.index(day), row=0)
-            for week_idx, week in enumerate(cal):
-                for day_idx, day in enumerate(week):
-                    if day != 0:
-                        date_str = f"{self.current_date.year}-{self.current_date.month:02d}-{day:02d}"
-                        text = str(day)
-                        if date_str in self.events:
-                            text += f" ({len(self.events[date_str])})"
-                        btn = tk.Button(self.calendar_frame, text=text, 
-                                       command=lambda d=date_str: self.show_events(d), 
-                                       bg="#555555", fg="white")
-                        btn.grid(column=day_idx, row=week_idx + 1, sticky="nsew")
-            for i in range(7):
-                self.calendar_frame.grid_columnconfigure(i, weight=1)
-            for i in range(len(cal) + 1):
-                self.calendar_frame.grid_rowconfigure(i, weight=1)
-            self.month_label.config(text=self.current_date.strftime("%B %Y"))
-        except:
-            pass
-
-    def prev_month(self):
-        """Go to previous month."""
-        try:
-            self.current_date = self.current_date - datetime.timedelta(days=self.current_date.day)
-            self.update_calendar()
-        except:
-            pass
-
-    def next_month(self):
-        """Go to next month."""
-        try:
-            self.current_date = (self.current_date + 
-                                datetime.timedelta(days=calendar.monthrange(
-                                    self.current_date.year, self.current_date.month)[1] + 1))
-            self.current_date = self.current_date.replace(day=1)
-            self.update_calendar()
-        except:
-            pass
-
-    def add_event(self):
-        """Add a new event."""
-        try:
-            window = self.wm.create_window("Add Event", self.build_event_ui, width=400, height=200)
-        except Exception as e:
-            self.wm.notifications.send("Calendar", f"Error: {str(e)}")
-
-    def build_event_ui(self, frame):
-        """Build the event creation UI."""
-        try:
-            tk.Label(frame, text="Date (YYYY-MM-DD):", fg="white", bg="#333333").pack()
-            date_var = tk.StringVar(value=self.current_date.strftime("%Y-%m-%d"))
-            tk.Entry(frame, textvariable=date_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Label(frame, text="Event:", fg="white", bg="#333333").pack()
-            event_var = tk.StringVar()
-            tk.Entry(frame, textvariable=event_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            
-            tk.Button(frame, text="Add", 
-                     command=lambda: self.save_event(date_var.get(), event_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def save_event(self, date, event):
-        """Save an event."""
-        try:
-            if not re.match(r"\d{4}-\d{2}-\d{2}", date):
-                self.wm.notifications.send("Calendar", "Invalid date format")
-                return
-            if date not in self.events:
-                self.events[date] = []
-            self.events[date].append(event)
-            self.save_events()
-            self.update_calendar()
-            self.wm.notifications.send("Calendar", "Event added")
-        except Exception as e:
-            self.wm.notifications.send("Calendar", f"Error: {str(e)}")
-
-    def show_events(self, date):
-        """Show events for a date."""
-        try:
-            events = self.events.get(date, [])
-            window = self.wm.create_window(f"Events for {date}", 
-                                         lambda f: self.build_events_ui(f, date, events), 
-                                         width=400, height=200)
-        except Exception as e:
-            self.wm.notifications.send("Calendar", f"Error: {str(e)}")
-
-    def build_events_ui(self, frame, date, events):
-        """Build the events display UI."""
-        try:
-            tk.Label(frame, text=f"Events for {date}", fg="white", bg="#333333").pack()
-            listbox = tk.Listbox(frame, bg="#555555", fg="white")
-            listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            for event in events:
-                listbox.insert(tk.END, event)
-            tk.Button(frame, text="Delete Selected", 
-                     command=lambda: self.delete_event(date, listbox.curselection()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def delete_event(self, date, indices):
-        """Delete selected events."""
-        try:
-            for idx in reversed(indices):
-                self.events[date].pop(idx)
-            if not self.events[date]:
-                del self.events[date]
-            self.save_events()
-            self.update_calendar()
-            self.wm.notifications.send("Calendar", "Event deleted")
-        except Exception as e:
-            self.wm.notifications.send("Calendar", f"Error: {str(e)}")
-
-### --- NOTES APP ---
-class NotesApp:
-    """Note-taking application with rich text support."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.filename = None
-        self.recent_files = self.load_recent_files()
-
-    def load_recent_files(self):
-        """Load recent files."""
-        try:
-            recent_path = os.path.expanduser("~/.berke0s/notes_recent.json")
-            if os.path.exists(recent_path):
-                with open(recent_path, 'r') as f:
-                    return json.load(f)
-            return []
-        except:
-            return []
-
-    def save_recent_files(self):
-        """Save recent files."""
-        try:
-            recent_path = os.path.expanduser("~/.berke0s/notes_recent.json")
-            os.makedirs(os.path.dirname(recent_path), exist_ok=True)
-            with open(recent_path, 'w') as f:
-                json.dump(self.recent_files[:10], f)
-        except:
-            pass
-
-    def open(self):
-        self.wm.create_window("Notes", self.build_ui, width=600, height=400)
-
-    def open_file(self, filename):
-        """Open a specific note file."""
-        self.filename = filename
-        self.open()
-        self.load_file()
-
-    def build_ui(self, frame):
-        """Build the notes UI."""
-        try:
-            # Menu bar
-            menubar = tk.Menu(frame)
-            file_menu = tk.Menu(menubar, tearoff=0, bg="#333333", fg="white")
-            file_menu.add_command(label="New", command=self.new_file)
-            file_menu.add_command(label="Open", command=self.open_dialog)
-            file_menu.add_command(label="Save", command=self.save_file)
-            file_menu.add_command(label="Save As", command=self.save_as)
-            recent_menu = tk.Menu(file_menu, tearoff=0, bg="#333333", fg="white")
-            for recent in self.recent_files:
-                recent_menu.add_command(label=os.path.basename(recent), 
-                                      command=lambda f=recent: self.open_file(f))
-            file_menu.add_cascade(label="Recent Files", menu=recent_menu)
-            menubar.add_cascade(label="File", menu=file_menu)
-            format_menu = tk.Menu(menubar, tearoff=0, bg="#333333", fg="white")
-            format_menu.add_command(label="Bold", command=lambda: self.apply_format("bold"))
-            format_menu.add_command(label="Italic", command=lambda: self.apply_format("italic"))
-            menubar.add_cascade(label="Format", menu=format_menu)
-            self.wm.root.config(menu=menubar)
-
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="New", command=self.new_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Open", command=self.open_dialog, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Save", command=self.save_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Bold", command=lambda: self.apply_format("bold"), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Italic", command=lambda: self.apply_format("italic"), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-
-            # Text area
-            self.text = tk.Text(frame, bg="#555555", fg="white", font=("Arial", 12))
-            self.text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            self.text.tag_configure("bold", font=("Arial", 12, "bold"))
-            self.text.tag_configure("italic", font=("Arial", 12, "italic"))
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def new_file(self):
-        """Create a new note."""
-        try:
-            self.filename = None
-            self.text.delete(1.0, tk.END)
-        except:
-            pass
-
-    def open_dialog(self):
-        """Open a file dialog."""
-        try:
-            filename = filedialog.askopenfilename(filetypes=[("Notes", "*.txt *.note")])
-            if filename:
-                self.filename = filename
-                self.load_file()
-                if filename not in self.recent_files:
-                    self.recent_files.insert(0, filename)
-                    self.save_recent_files()
-        except Exception as e:
-            self.wm.notifications.send("Notes", f"Error: {str(e)}")
-
-    def load_file(self):
-        """Load note content."""
-        try:
-            with open(self.filename, 'r') as f:
-                content = f.read()
-            self.text.delete(1.0, tk.END)
-            self.text.insert(tk.END, content)
-        except Exception as e:
-            self.wm.notifications.send("Notes", f"Error: {str(e)}")
-
-    def save_file(self):
-        """Save the current note."""
-        try:
-            if self.filename:
-                with open(self.filename, 'w') as f:
-                    f.write(self.text.get(1.0, tk.END).strip())
-                if self.filename not in self.recent_files:
-                    self.recent_files.insert(0, self.filename)
-                    self.save_recent_files()
-            else:
-                self.save_as()
-        except Exception as e:
-            self.wm.notifications.send("Notes", f"Error: {str(e)}")
-
-    def save_as(self):
-        """Save note with a new name."""
-        try:
-            filename = filedialog.asksaveasfilename(filetypes=[("Notes", "*.note")])
-            if filename:
-                self.filename = filename
-                self.save_file()
-        except Exception as e:
-            self.wm.notifications.send("Notes", f"Error: {str(e)}")
-
-    def apply_format(self, tag):
-        """Apply text formatting."""
-        try:
-            sel_start, sel_end = self.text.tag_ranges(tk.SEL) or (None, None)
-            if sel_start:
-                self.text.tag_add(tag, sel_start, sel_end)
-            else:
-                self.wm.notifications.send("Notes", "Select text to format")
-        except Exception as e:
-            self.wm.notifications.send("Notes", f"Error: {str(e)}")
-
-### --- NETWORK MONITOR ---
-class NetworkMonitor:
-    """Monitor network usage."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.visible = False
-        self.window = None
-        self.net_io = psutil.net_io_counters()
-
-    def toggle(self):
-        """Toggle the network monitor."""
-        if not self.visible:
-            self.window = self.wm.create_window("Network Monitor", self.build_ui, 
-                                              width=400, height=200)
-            self.visible = True
-        else:
-            self.wm.close_window(self.window)
-            self.visible = False
-            self.window = None
-
-    def build_ui(self, frame):
-        """Build the network monitor UI."""
-        try:
-            self.sent_label = tk.Label(frame, text="Sent: 0 KB/s", fg="white", bg="#333333")
-            self.sent_label.pack(pady=5)
-            self.recv_label = tk.Label(frame, text="Received: 0 KB/s", fg="white", bg="#333333")
-            self.recv_label.pack(pady=5)
-            self.update_stats()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def update_stats(self):
-        """Update network stats."""
-        try:
-            new_io = psutil.net_io_counters()
-            sent = (new_io.bytes_sent - self.net_io.bytes_sent) / 1024  # KB/s
-            recv = (new_io.bytes_recv - self.net_io.bytes_recv) / 1024  # KB/s
-            self.net_io = new_io
-            self.sent_label.config(text=f"Sent: {sent:.2f} KB/s")
-            self.recv_label.config(text=f"Received: {recv:.2f} KB/s")
-            if self.visible:
-                self.wm.root.after(1000, self.update_stats)
-        except:
-            pass
-
-### --- SYSTEM LOG VIEWER ---
-class SystemLogViewer:
-    """View system logs."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("System Logs", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the log viewer UI."""
-        try:
-            tk.Label(frame, text="System Logs", fg="white", bg="#333333").pack(pady=5)
-            self.log_text = tk.Text(frame, bg="#555555", fg="white", font=("Monospace", 10))
-            self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Refresh", command=self.refresh_logs, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.refresh_logs()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_logs(self):
-        """Refresh system logs."""
-        try:
-            self.log_text.delete(1.0, tk.END)
-            log_path = "/var/log/messages"
-            if os.path.exists(log_path):
-                with open(log_path, 'r') as f:
-                    self.log_text.insert(tk.END, f.read())
-            else:
-                self.log_text.insert(tk.END, "No logs found")
-        except Exception as e:
-            self.wm.notifications.send("Logs", f"Error: {str(e)}")
-
-### --- ENHANCED WINDOW MANAGER ---
-class WindowManager:
-    """Enhanced window manager with snapping and virtual desktops."""
-    def __init__(self):
-        """Initialize the window manager."""
-        self.root = tk.Tk()
-        self.root.title("Berke0S")
-        self.root.attributes('-fullscreen', True)
-        self.root.configure(bg="#333333")
-        self.windows = {}
-        self.notifications = None
-        self.session_manager = None
-        self.config = load_config()
-        self.taskbar = None
-        self.start_btn = None
-        self.desktop = None
-        self.background_video = None
-        self.shortcuts = {}
-        self.pinned_apps = []
-        self.virtual_desktops = [{}]  # List of window dictionaries
-        self.current_desktop = 0
-        self.file_associations = {
-            '.txt': self.text_editor,
-            '.py': self.code_editor,
-            '.sh': self.code_editor,
-            '.c': self.code_editor,
-            '.png': self.image_viewer,
-            '.jpg': self.image_viewer,
-            '.mp3': self.media_player,
-            '.mp4': self.media_player,
-            '.note': self.notes
-        }
-        self.current_user = None
-        self.session_timeout = None
-        self.setup_ui()
-        self.setup_file_associations()
-        self.start_session_timeout()
-
-    def setup_ui(self):
-        """Set up the main UI components."""
-        try:
-            # Taskbar
-            self.taskbar = tk.Frame(self.root, bg=self.config.get("taskbar_color", "#333333"), height=30)
-            self.taskbar.pack(side=tk.BOTTOM, fill=tk.X)
-            
-            # Start button
-            self.start_btn = tk.Button(self.taskbar, text="Start", fg="white", 
-                                      bg="#555555", relief=tk.RAISED)
-            self.start_btn.pack(side=tk.LEFT, padx=5)
-            
-            # Search bar
-            self.search_var = tk.StringVar()
-            tk.Entry(self.taskbar, textvariable=self.search_var, bg="#555555", fg="white", 
-                    width=20).pack(side=tk.LEFT, padx=5)
-            tk.Button(self.taskbar, text="Search", command=self.global_search, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            
-            # Pinned apps
-            self.pinned_frame = tk.Frame(self.taskbar, bg="#333333")
-            self.pinned_frame.pack(side=tk.LEFT, padx=5)
-            self.update_pinned_apps()
-            
-            # Desktop
-            self.desktop = tk.Canvas(self.root, bg="#333333", highlightthickness=0)
-            self.desktop.pack(fill=tk.BOTH, expand=True)
-            self.desktop.bind("<B1-Motion>", self.drag_shortcut)
-            self.desktop.bind("<ButtonRelease-1>", self.drop_shortcut)
-            
-            # Load background
-            if "background" in self.config:
-                subprocess.run(["feh", "--bg-scale", self.config["background"]], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if "background_slideshow" in self.config:
-                self.start_slideshow()
-            if "background_video" in self.config:
-                self.background_video = subprocess.Popen(
-                    ["mplayer", "-vo", "x11", "-loop", "0", self.config["background_video"]], 
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
-            # Apply theme
-            theme = self.config.get("theme", "dark")
-            colors = {"dark": {"bg": "#333333", "fg": "white", "entry": "#555555"}, 
-                     "light": {"bg": "#f0f0f0", "fg": "black", "entry": "#ffffff"}}
-            self.apply_theme(colors[theme])
-            
-            # Virtual desktop controls
-            desktop_frame = tk.Frame(self.taskbar, bg="#333333")
-            desktop_frame.pack(side=tk.RIGHT, padx=5)
-            tk.Button(desktop_frame, text="New Desktop", command=self.add_desktop, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(desktop_frame, text="Prev Desktop", command=self.prev_desktop, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(desktop_frame, text="Next Desktop", command=self.next_desktop, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-
-    def start_slideshow(self):
-        """Start wallpaper slideshow."""
-        try:
-            images = self.config.get("background_slideshow", [])
-            if not images:
-                return
-            def cycle():
-                try:
-                    current = self.config.get("current_slideshow", 0)
-                    subprocess.run(["feh", "--bg-scale", images[current]], 
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    self.config["current_slideshow"] = (current + 1) % len(images)
-                    self.save_config()
-                    self.root.after(300000, cycle)  # 5 minutes
-                except:
-                    pass
-            cycle()
-        except:
-            pass
-
-    def update_pinned_apps(self):
-        """Update pinned apps in taskbar."""
-        try:
-            for widget in self.pinned_frame.winfo_children():
-                widget.destroy()
-            apps = {
-                "File Manager": self.file_manager.open,
-                "Code Editor": self.code_editor.open,
-                "Notes": self.notes.open
-            }
-            for app in self.pinned_apps:
-                if app in apps:
-                    tk.Button(self.pinned_frame, text=app, command=apps[app], 
-                             bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-        except:
-            pass
-
-    def pin_app(self, app_name):
-        """Pin an app to the taskbar."""
-        try:
-            if app_name not in self.pinned_apps:
-                self.pinned_apps.append(app_name)
-                self.update_pinned_apps()
-                self.save_config()
-        except:
-            pass
-
-    def unpin_app(self, app_name):
-        """Unpin an app from the taskbar."""
-        try:
-            if app_name in self.pinned_apps:
-                self.pinned_apps.remove(app_name)
-                self.update_pinned_apps()
-                self.save_config()
-        except:
-            pass
-
-    def global_search(self):
-        """Perform a global search for files and apps."""
-        try:
-            query = self.search_var.get().lower()
-            results = []
-            # Search apps
-            apps = {
-                "File Manager": self.file_manager.open,
-                "Text Editor": self.text_editor.open,
-                "Code Editor": self.code_editor.open,
-                "Calculator": self.calculator.open,
-                "Web Browser": self.web_browser.open,
-                "System Info": self.system_info.open,
-                "Package Manager": self.package_manager.open,
-                "Task Manager": self.task_manager.open,
-                "Media Player": lambda: self.media_player.play(os.path.expanduser("~/test.mp3")),
-                "Image Viewer": lambda: self.image_viewer.open_file(os.path.expanduser("~/test.png")),
-                "Presentation": self.presentation.open,
-                "Control Center": self.control_center.open,
-                "Disk Manager": self.disk_manager.open,
-                "Terminal": self.terminal.initialize,
-                "System Monitor": self.system_monitor.toggle,
-                "Screenshot": self.screenshot.take_screenshot,
-                "Backup Utility": self.backup.open,
-                "Email Client": self.email_client.open,
-                "Calendar": self.calendar.open,
-                "Notes": self.notes.open,
-                "Network Monitor": self.network_monitor.toggle,
-                "System Logs": self.log_viewer.open
-            }
-            for app in apps:
-                if query in app.lower():
-                    results.append(f"App: {app}")
-            # Search files
-            for root, _, files in os.walk(os.path.expanduser("~")):
-                for file in files:
-                    if query in file.lower():
-                        results.append(f"File: {os.path.join(root, file)}")
-            # Display results
-            self.wm.create_window("Search Results", 
-                                lambda f: self.build_search_ui(f, results), 
-                                width=600, height=400)
-        except Exception as e:
-            self.notifications.send("Search", f"Error: {str(e)}")
-
-    def build_search_ui(self, frame, results):
-        """Build the search results UI."""
-        try:
-            listbox = tk.Listbox(frame, bg="#555555", fg="white")
-            listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            for result in results[:50]:  # Limit to 50 results
-                listbox.insert(tk.END, result)
-            listbox.bind('<Double-1>', lambda e: self.open_search_result(listbox.get(listbox.curselection()[0])))
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def open_search_result(self, result):
-        """Open a search result."""
-        try:
-            if result.startswith("App: "):
-                app_name = result[5:]
-                apps = {
-                    "File Manager": self.file_manager.open,
-                    "Text Editor": self.text_editor.open,
-                    "Code Editor": self.code_editor.open,
-                    "Calculator": self.calculator.open,
-                    "Web Browser": self.web_browser.open,
-                    "System Info": self.system_info.open,
-                    "Package Manager": self.package_manager.open,
-                    "Task Manager": self.task_manager.open,
-                    "Media Player": lambda: self.media_player.play(os.path.expanduser("~/test.mp3")),
-                    "Image Viewer": lambda: self.image_viewer.open_file(os.path.expanduser("~/test.png")),
-                    "Presentation": self.presentation.open,
-                    "Control Center": self.control_center.open,
-                    "Disk Manager": self.disk_manager.open,
-                    "Terminal": self.terminal.initialize,
-                    "System Monitor": self.system_monitor.toggle,
-                    "Screenshot": self.screenshot.take_screenshot,
-                    "Backup Utility": self.backup.open,
-                    "Email Client": self.email_client.open,
-                    "Calendar": self.calendar.open,
-                    "Notes": self.notes.open,
-                    "Network Monitor": self.network_monitor.toggle,
-                    "System Logs": self.log_viewer.open
-                }
-                if app_name in apps:
-                    apps[app_name]()
-            elif result.startswith("File: "):
-                self.open_file(result[6:])
-        except Exception as e:
-            self.notifications.send("Search", f"Error: {str(e)}")
-
-    def create_window(self, title, build_func, x=100, y=100, width=400, height=300):
-        """Create a new window with snapping and animations."""
-        try:
-            window = tk.Toplevel(self.root)
-            window.title(title)
-            window.geometry(f"{width}x{height}+{x}+{y}")
-            window.configure(bg="#333333")
-            frame = tk.Frame(window, bg="#333333")
-            frame.pack(fill=tk.BOTH, expand=True)
-            build_func(frame)
-            self.windows[window] = {"title": title, "x": x, "y": y, "width": width, 
-                                   "height": height, "desktop": self.current_desktop}
-            window.protocol("WM_DELETE_WINDOW", lambda: self.close_window(window))
-            window.bind("<Configure>", lambda e: self.snap_window(window, e))
-            window.bind("<Map>", lambda e: self.animate_window(window, "map"))
-            window.bind("<Unmap>", lambda e: self.animate_window(window, "unmap"))
-            # Add to current virtual desktop
-            self.virtual_desktops[self.current_desktop][window] = self.windows[window]
-            self.update_desktop()
-            return window
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-            return None
-
-    def snap_window(self, window, event):
-        """Snap windows to screen edges."""
-        try:
-            if window not in self.windows:
-                return
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight() - 30  # Account for taskbar
-            x, y = window.winfo_x(), window.winfo_y()
-            if x < 10:
-                window.geometry(f"{screen_width//2}x{screen_height}+0+0")
-            elif x > screen_width - window.winfo_width() - 10:
-                window.geometry(f"{screen_width//2}x{screen_height}+{screen_width//2}+0")
-            elif y < 10:
-                window.geometry(f"{screen_width}x{screen_height//2}+0+0")
-            self.windows[window]["x"] = window.winfo_x()
-            self.windows[window]["y"] = window.winfo_y()
-            self.windows[window]["width"] = window.winfo_width()
-            self.windows[window]["height"] = window.winfo_height()
-            self.virtual_desktops[self.current_desktop][window] = self.windows[window]
-            self.save_session()
-        except:
-            pass
-
-    def animate_window(self, window, action):
-        """Animate window mapping/unmapping."""
-        try:
-            if action == "map":
-                window.attributes('-alpha', 0)
-                for i in range(0, 11):
-                    window.attributes('-alpha', i / 10)
-                    window.update()
-                    time.sleep(0.02)
-            elif action == "unmap":
-                for i in range(10, -1, -1):
-                    window.attributes('-alpha', i / 10)
-                    window.update()
-                    time.sleep(0.02)
-        except:
-            pass
-
-    def add_desktop(self):
-        """Add a new virtual desktop."""
-        try:
-            self.virtual_desktops.append({})
-            self.switch_desktop(len(self.virtual_desktops) - 1)
-        except:
-            pass
-
-    def prev_desktop(self):
-        """Switch to previous virtual desktop."""
-        try:
-            if self.current_desktop > 0:
-                self.switch_desktop(self.current_desktop - 1)
-        except:
-            pass
-
-    def next_desktop(self):
-        """Switch to next virtual desktop."""
-        try:
-            if self.current_desktop < len(self.virtual_desktops) - 1:
-                self.switch_desktop(self.current_desktop + 1)
-        except:
-            pass
-
-    def switch_desktop(self, desktop_idx):
-        """Switch to a virtual desktop."""
-        try:
-            # Hide current desktop windows
-            for window in self.virtual_desktops[self.current_desktop]:
-                window.withdraw()
-            self.current_desktop = desktop_idx
-            # Show new desktop windows
-            for window in self.virtual_desktops[self.current_desktop]:
-                window.deiconify()
-            self.wm.notifications.send("Desktop", f"Switched to Desktop {desktop_idx + 1}")
-        except:
-            pass
-
-    def update_desktop(self):
-        """Update the current desktop."""
-        try:
-            for desktop_idx, windows in enumerate(self.virtual_desktops):
-                for window in windows:
-                    if desktop_idx == self.current_desktop:
-                        window.deiconify()
-                    else:
-                        window.withdraw()
-        except:
-            pass
-
-    def start_session_timeout(self):
-        """Start session timeout timer."""
-        try:
-            timeout = self.config.get("session_timeout", 1800)  # 30 minutes
-            if timeout > 0:
-                self.session_timeout = self.root.after(timeout * 1000, self.logout)
-        except:
-            pass
-
-    def reset_session_timeout(self):
-        """Reset session timeout on activity."""
-        try:
-            if self.session_timeout:
-                self.root.after_cancel(self.session_timeout)
-            self.start_session_timeout()
-        except:
-            pass
-
-    # Override previous methods for enhanced functionality
-    def setup_file_associations(self):
-        """Load file associations from config."""
-        try:
-            assoc_file = os.path.expanduser("~/.berke0s/file_associations.json")
-            if os.path.exists(assoc_file):
-                with open(assoc_file, 'r') as f:
-                    loaded = json.load(f)
-                for ext, app_name in loaded.items():
-                    apps = {
-                        "TextEditor": self.text_editor,
-                        "CodeEditor": self.code_editor,
-                        "MediaPlayer": self.media_player,
-                        "ImageViewer": self.image_viewer,
-                        "NotesApp": self.notes
-                    }
-                    if app_name in apps:
-                        self.file_associations[ext] = apps[app_name]
-        except:
-            pass
-
-    def open_file(self, path):
-        """Open a file based on its extension."""
-        try:
-            ext = os.path.splitext(path)[1].lower()
-            if ext in self.file_associations:
-                app = self.file_associations[ext]
-                if hasattr(app, "open_file"):
-                    app.open_file(path)
-                else:
-                    app.open()
-            elif ext in ['.c', '.cpp']:
-                self.code_editor.open_file(path)
-            elif ext in ['.avi']:
-                self.media_player.play(path)
-            elif ext in ['.zip', '.tar.gz']:
-                self.file_manager.extract_file(path)
-            else:
-                self.text_editor.open_file(path)
-            if path not in self.recent_files:
-                self.recent_files.insert(0, path)
-                self.recent_files = self.recent_files[:10]
-                self.save_recent_files()
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error opening file: {str(e)}")
-
-    def save_recent_files(self):
-        """Save recent files."""
-        try:
-            recent_path = os.path.expanduser("~/.berke0s/recent_files.json")
-            os.makedirs(os.path.dirname(recent_path), exist_ok=True)
-            with open(recent_path, 'w') as f:
-                json.dump(self.recent_files, f)
-        except:
-            pass
-
-    def add_desktop_shortcut(self, path, x, y):
-        """Add a shortcut to the desktop."""
-        try:
-            name = os.path.basename(path)
-            shortcut_id = self.desktop.create_text(x, y, text=name, fill="white", 
-                                                 font=("Arial", self.config.get("icon_size", 10)), 
-                                                 anchor=tk.NW)
-            self.shortcuts[shortcut_id] = {"path": path, "x": x, "y": y}
-            self.desktop.tag_bind(shortcut_id, "<Button-1>", 
-                                 lambda e: self.start_drag(shortcut_id))
-            self.desktop.tag_bind(shortcut_id, "<Double-1>", 
-                                 lambda e: self.open_shortcut(shortcut_id))
-            self.desktop.tag_bind(shortcut_id, "<Button-3>", 
-                                 lambda e: self.show_shortcut_menu(shortcut_id, e))
-            self.save_shortcuts()
-        except Exception as e:
-            self.notifications.send("Desktop", f"Error: {str(e)}")
-
-    def apply_theme(self, colors):
-        """Apply theme with font and cursor support."""
-        try:
-            self.root.configure(bg=colors["bg"], cursor=self.config.get("cursor", ""))
-            self.desktop.configure(bg=colors["bg"])
-            self.taskbar.configure(bg=self.config.get("taskbar_color", colors["bg"]))
-            font_size = self.config.get("font_size", 12)
-            for window in self.windows:
-                window.configure(bg=colors["bg"])
-                for widget in window.winfo_children():
-                    if isinstance(widget, (tk.Frame, tk.Label, tk.Button)):
-                        widget.configure(bg=colors["bg"], fg=colors["fg"], 
-                                        font=("Arial", font_size))
-                    elif isinstance(widget, tk.Entry):
-                        widget.configure(bg=colors["entry"], fg=colors["fg"], 
-                                        font=("Arial", font_size))
-                    elif isinstance(widget, tk.Text):
-                        widget.configure(bg=colors["entry"], fg=colors["fg"], 
-                                        font=("Monospace", font_size))
-        except:
-            pass
-
-### --- ENHANCED FILE MANAGER ---
-class FileManager:
-    """Enhanced file manager with compression and properties."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.current_path = os.path.expanduser("~")
-        self.shortcuts = {}
-        self.recent_files = self.wm.recent_files
-
-    def extract_file(self, path):
-        """Extract compressed files."""
-        try:
-            if path.endswith('.zip'):
-                subprocess.run(["unzip", path, "-d", os.path.splitext(path)[0]], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif path.endswith('.tar.gz'):
-                subprocess.run(["tar", "-xzf", path, "-C", os.path.dirname(path)], 
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.update_file_list()
-            self.wm.notifications.send("File Manager", f"Extracted {os.path.basename(path)}")
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def compress_file(self):
-        """Compress selected files."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0]).replace("[DIR] ", "")
-            path = os.path.join(self.current_path, selected)
-            output = filedialog.asksaveasfilename(filetypes=[("Zip", "*.zip"), ("Tar", "*.tar.gz")])
-            if output:
-                if output.endswith('.zip'):
-                    subprocess.run(["zip", "-r", output, selected], cwd=self.current_path, 
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                elif output.endswith('.tar.gz'):
-                    subprocess.run(["tar", "-czf", output, selected], cwd=self.current_path, 
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.update_file_list()
-                self.wm.notifications.send("File Manager", f"Compressed to {os.path.basename(output)}")
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def show_properties(self):
-        """Show file properties."""
-        try:
-            selected = self.file_list.get(self.file_list.curselection()[0]).replace("[DIR] ", "")
-            path = os.path.join(self.current_path, selected)
-            stat = os.stat(path)
-            info = (
-                f"Name: {selected}\n"
-                f"Path: {path}\n"
-                f"Size: {stat.st_size // 1024} KB\n"
-                f"Modified: {datetime.datetime.fromtimestamp(stat.st_mtime)}\n"
-                f"Permissions: {oct(stat.st_mode & 0o777)[2:]}"
-            )
-            self.wm.create_window(f"Properties: {selected}", 
-                                lambda f: tk.Label(f, text=info, fg="white", bg="#333333", 
-                                                  justify=tk.LEFT).pack(padx=10, pady=10), 
-                                width=300, height=200)
-        except Exception as e:
-            self.wm.notifications.send("File Manager", f"Error: {str(e)}")
-
-    def build_ui(self, frame):
-        """Build the file manager UI."""
-        try:
-            # Toolbar
-            toolbar = tk.Frame(frame, bg="#333333")
-            toolbar.pack(fill=tk.X)
-            tk.Button(toolbar, text="Up", command=self.go_up, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="New Folder", command=self.create_folder, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Delete", command=self.delete_item, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Create Shortcut", command=self.create_shortcut, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Compress", command=self.compress_file, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            tk.Button(toolbar, text="Properties", command=self.show_properties, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            path_var = tk.StringVar(value=self.current_path)
-            tk.Entry(toolbar, textvariable=path_var, bg="#555555").pack(
-                side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-            tk.Button(toolbar, text="Go", command=lambda: self.change_path(path_var.get()), 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-            search_var = tk.StringVar()
-            tk.Entry(toolbar, textvariable=search_var, width=15, bg="#555555").pack(
-                side=tk.RIGHT, padx=2)
-            tk.Button(toolbar, text="Search", command=lambda: self.search_files(search_var.get()), 
-                     bg="#555555", fg="white").pack(side=tk.RIGHT, padx=2)
-
-            # Main content
-            main_frame = tk.Frame(frame, bg="#333333")
-            main_frame.pack(fill=tk.BOTH, expand=True)
-
-            # Directory tree
-            tree_frame = tk.Frame(main_frame, bg="#333333")
-            tree_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-            tk.Label(tree_frame, text="Folders", fg="white", bg="#333333").pack()
-            self.tree = ttk.Treeview(tree_frame, show="tree")
-            self.tree.pack(fill=tk.Y, expand=True)
-            self.tree.bind('<<TreeviewOpen>>', self.update_tree)
-            self.tree.bind('<Double-1>', self.tree_select)
-            self.populate_tree()
-
-            # File list
-            list_frame = tk.Frame(main_frame, bg="#333333")
-            list_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-            tk.Label(list_frame, text="Files", fg="white", bg="#333333").pack()
-            self.file_list = tk.Listbox(list_frame, bg="#555555", fg="white")
-            self.file_list.pack(fill=tk.BOTH, expand=True)
-            self.file_list.bind('<Double-1>', self.open_item)
-            self.file_list.bind('<Button-3>', self.show_context_menu)
-            self.update_file_list()
-
-            # Context menu
-            self.context_menu = tk.Menu(frame, tearoff=0, bg="#333333", fg="white")
-            self.context_menu.add_command(label="Open", command=self.open_item)
-            self.context_menu.add_command(label="Delete", command=self.delete_item)
-            self.context_menu.add_command(label="Rename", command=self.rename_item)
-            self.context_menu.add_command(label="Create Shortcut", command=self.create_shortcut)
-            self.context_menu.add_command(label="Compress", command=self.compress_file)
-            self.context_menu.add_command(label="Properties", command=self.show_properties)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-### --- ACCESSIBILITY MANAGER ---
-class AccessibilityManager:
-    """Manage accessibility features like screen reader."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.screen_reader_active = False
-
-    def toggle_screen_reader(self):
-        """Toggle screen reader."""
-        try:
-            self.screen_reader_active = not self.screen_reader_active
-            if self.screen_reader_active:
-                self.wm.notifications.send("Accessibility", "Screen reader enabled")
-                self.wm.root.bind("<FocusIn>", self.read_widget)
-            else:
-                self.wm.notifications.send("Accessibility", "Screen reader disabled")
-                self.wm.root.unbind("<FocusIn>")
-        except Exception as e:
-            self.wm.notifications.send("Accessibility", f"Error: {str(e)}")
-
-    def read_widget(self, event):
-        """Read focused widget's text."""
-        try:
-            widget = event.widget
-            text = ""
-            if isinstance(widget, tk.Label):
-                text = widget.cget("text")
-            elif isinstance(widget, tk.Button):
-                text = widget.cget("text")
-            elif isinstance(widget, tk.Entry):
-                text = widget.get()
-            elif isinstance(widget, tk.Text):
-                text = widget.get(1.0, tk.END).strip()[:100]  # Limit to 100 chars
-            if text:
-                subprocess.run(["espeak", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except:
-            pass
-
-    def toggle_high_contrast(self):
-        """Toggle high-contrast mode."""
-        try:
-            theme = self.wm.config.get("theme", "dark")
-            if theme == "high_contrast":
-                self.wm.config["theme"] = "dark"
-                colors = {"bg": "#333333", "fg": "white", "entry": "#555555"}
-            else:
-                self.wm.config["theme"] = "high_contrast"
-                colors = {"bg": "black", "fg": "yellow", "entry": "black"}
-            self.wm.apply_theme(colors)
-            self.wm.save_config()
-            self.wm.notifications.send("Accessibility", f"High contrast {'enabled' if theme != 'high_contrast' else 'disabled'}")
-        except Exception as e:
-            self.wm.notifications.send("Accessibility", f"Error: {str(e)}")
-
-### --- CLIPBOARD MANAGER ---
-class ClipboardManager:
-    """Manage clipboard history."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.history = []
-        self.max_history = 10
-
-    def open(self):
-        self.wm.create_window("Clipboard Manager", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the clipboard manager UI."""
-        try:
-            self.clip_list = tk.Listbox(frame, bg="#555555", fg="white")
-            self.clip_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Paste", command=self.paste_clip, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Clear", command=self.clear_history, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.wm.root.bind("<Control-c>", self.copy_event)
-            self.wm.root.bind("<Control-x>", self.copy_event)
-            self.update_clipboard()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def copy_event(self, event):
-        """Handle copy/cut events."""
-        try:
-            clip = self.wm.root.clipboard_get()
-            if clip and clip not in self.history:
-                self.history.insert(0, clip)
-                self.history = self.history[:self.max_history]
-                self.update_clipboard()
-        except:
-            pass
-
-    def update_clipboard(self):
-        """Update clipboard history display."""
-        try:
-            self.clip_list.delete(0, tk.END)
-            for clip in self.history:
-                self.clip_list.insert(tk.END, clip[:50])  # Limit display length
-        except:
-            pass
-
-    def paste_clip(self):
-        """Paste selected clipboard item."""
-        try:
-            selected = self.clip_list.get(self.clip_list.curselection()[0])
-            self.wm.root.clipboard_clear()
-            self.wm.root.clipboard_append(selected)
-            self.wm.notifications.send("Clipboard", "Item pasted")
-        except Exception as e:
-            self.wm.notifications.send("Clipboard", f"Error: {str(e)}")
-
-    def clear_history(self):
-        """Clear clipboard history."""
-        try:
-            self.history = []
-            self.update_clipboard()
-            self.wm.notifications.send("Clipboard", "History cleared")
-        except:
-            pass
-
-### --- SYSTEM DIAGNOSTICS ---
-class SystemDiagnostics:
-    """Perform system health checks."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("System Diagnostics", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the diagnostics UI."""
-        try:
-            tk.Label(frame, text="System Diagnostics", fg="white", bg="#333333").pack(pady=5)
-            self.diag_text = tk.Text(frame, bg="#555555", fg="white", font=("Monospace", 10))
-            self.diag_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Run Diagnostics", command=self.run_diagnostics, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.run_diagnostics()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def run_diagnostics(self):
-        """Run system diagnostics."""
-        try:
-            self.diag_text.delete(1.0, tk.END)
-            diagnostics = []
-            # CPU
-            diagnostics.append(f"CPU Usage: {psutil.cpu_percent()}%")
-            # Memory
-            mem = psutil.virtual_memory()
-            diagnostics.append(f"Memory: {mem.used // 1024**2} MB / {mem.total // 1024**2} MB")
-            # Disk
-            disk = psutil.disk_usage('/')
-            diagnostics.append(f"Disk: {disk.used // 1024**3} GB / {disk.total // 1024**3} GB")
-            # Network
-            net = psutil.net_io_counters()
-            diagnostics.append(f"Network Sent: {net.bytes_sent // 1024**2} MB")
-            diagnostics.append(f"Network Received: {net.bytes_recv // 1024**2} MB")
-            # Battery
-            if os.path.exists("/sys/class/power_supply/BAT0/capacity"):
-                with open("/sys/class/power_supply/BAT0/capacity", 'r') as f:
-                    diagnostics.append(f"Battery: {f.read().strip()}%")
-            else:
-                diagnostics.append("Battery: Not detected")
-            # System uptime
-            uptime = subprocess.check_output(["uptime", "-p"], text=True).strip()
-            diagnostics.append(f"Uptime: {uptime}")
-            self.diag_text.insert(tk.END, "\n".join(diagnostics))
-        except Exception as e:
-            self.wm.notifications.send("Diagnostics", f"Error: {str(e)}")
-
-### --- POWER MANAGER ---
-class PowerManager:
-    """Manage power settings like sleep/suspend."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Power Manager", self.build_ui, width=400, height=200)
-
-    def build_ui(self, frame):
-        """Build the power manager UI."""
-        try:
-            tk.Label(frame, text="Power Management", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(frame, text="Sleep", command=self.sleep_system, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Suspend", command=self.suspend_system, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(frame, text="Auto-sleep (minutes):", fg="white", bg="#333333").pack()
-            sleep_var = tk.IntVar(value=self.wm.config.get("auto_sleep", 0))
-            tk.Entry(frame, textvariable=sleep_var, bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Set Auto-sleep", 
-                     command=lambda: self.set_auto_sleep(sleep_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", bg="#333333").pack(padx=10, pady=10)
-
-    def sleep_system(self):
-        """Put system to sleep."""
-        try:
-            subprocess.run(["sudo", "pm-sleep"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.wm.notifications.send("Power", "System entering sleep mode")
-        except Exception as e:
-            self.wm.notifications.send("Power", f"Error: {str(e)}")
-
-    def suspend_system(self):
-        """Suspend system."""
-        try:
-            subprocess.run(["sudo", "pm-suspend"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.wm.notifications.send("Power", "System suspended")
-        except Exception as e:
-            self.wm.notifications.send("Power", f"Error: {str(e)}")
-
-    def set_auto_sleep(self, minutes):
-        """Set auto-sleep timer."""
-        try:
-            self.wm.config["auto_sleep"] = minutes
-            self.wm.save_config()
-            if hasattr(self, "auto_sleep_timer"):
-                self.wm.root.after_cancel(self.auto_sleep_timer)
-            if minutes > 0:
-                self.auto_sleep_timer = self.wm.root.after(minutes * 60 * 1000, self.sleep_system)
-            self.wm.notifications.send("Power", f"Auto-sleep set to {minutes} minutes")
-        except Exception as e:
-            self.wm.notifications.send("Power", f"Error: {str(e)}")
-
-### --- ENHANCED CONTROL CENTER ---
-class ControlCenter:
-    """Enhanced system settings with advanced customization."""
-    def build_ui(self, frame):
-        """Build the control center UI."""
-        try:
-            notebook = ttk.Notebook(frame)
-            notebook.pack(fill=tk.BOTH, expand=True)
-
-            # Existing tabs (Network, Display, Audio, Users)
-            network = ttk.Frame(notebook)
-            notebook.add(network, text="Network")
-            tk.Label(network, text="Wi-Fi SSID", fg="white", bg="#333333").pack(pady=5)
-            ssid_var = tk.StringVar()
-            self.ssid_menu = ttk.Combobox(network, textvariable=ssid_var, state="readonly")
-            self.ssid_menu.pack(pady=5)
-            tk.Label(network, text="Password", fg="white", bg="#333333").pack(pady=5)
-            passwd_var = tk.StringVar()
-            tk.Entry(network, textvariable=passwd_var, show="*", bg="#555555").pack(pady=5)
-            tk.Button(network, text="Connect", 
-                     command=lambda: self.connect_wifi(ssid_var.get(), passwd_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(network, text="Refresh", command=self.refresh_wifi, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(network, text="Connect Wired", command=self.connect_wired, 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            display = ttk.Frame(notebook)
-            notebook.add(display, text="Display")
-            tk.Label(display, text="Brightness", fg="white", bg="#333333").pack(pady=5)
-            bright_var = tk.IntVar(value=50)
-            tk.Scale(display, from_=0, to=100, orient=tk.HORIZONTAL, variable=bright_var, 
-                    bg="#555555").pack(pady=5)
-            tk.Button(display, text="Apply", 
-                     command=lambda: self.set_brightness(bright_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            audio = ttk.Frame(notebook)
-            notebook.add(audio, text="Audio")
-            tk.Label(audio, text="Volume", fg="white", bg="#333333").pack(pady=5)
-            volume_var = tk.IntVar(value=50)
-            tk.Scale(audio, from_=0, to=100, orient=tk.HORIZONTAL, variable=volume_var, 
-                    bg="#555555").pack(pady=5)
-            tk.Button(audio, text="Apply", 
-                     command=lambda: self.set_volume(volume_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            users = ttk.Frame(notebook)
-            notebook.add(users, text="Users")
-            tk.Label(users, text="User Management", fg="white", bg="#333333").pack(pady=5)
-            self.user_list = tk.Listbox(users, bg="#555555", fg="white")
-            self.user_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(users, text="Add User", command=self.add_user, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(users, text="Delete User", command=self.delete_user, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(users, text="Change Password", command=self.change_password, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_users()
-
-            # Customization tab
-            customize = ttk.Frame(notebook)
-            notebook.add(customize, text="Customization")
-            tk.Label(customize, text="Desktop Background", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(customize, text="Set Image", command=self.set_background_image, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(customize, text="Set Video", command=self.set_background_video, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(customize, text="Set Slideshow", command=self.set_slideshow, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(customize, text="Taskbar Color", fg="white", bg="#333333").pack(pady=5)
-            color_var = tk.StringVar(value=self.wm.config.get("taskbar_color", "#333333"))
-            tk.Entry(customize, textvariable=color_var, bg="#555555").pack(pady=5)
-            tk.Button(customize, text="Apply Color", 
-                     command=lambda: self.set_taskbar_color(color_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(customize, text="Theme", fg="white", bg="#333333").pack(pady=5)
-            theme_var = tk.StringVar(value=self.wm.config.get("theme", "dark"))
-            tk.OptionMenu(customize, theme_var, "Dark", "Light", "High Contrast", 
-                         command=self.set_theme).pack(pady=5)
-            tk.Label(customize, text="Icon Size", fg="white", bg="#333333").pack(pady=5)
-            icon_size_var = tk.IntVar(value=self.wm.config.get("icon_size", 10))
-            tk.OptionMenu(customize, icon_size_var, 8, 10, 12, 14, 
-                         command=self.set_icon_size).pack(pady=5)
-            tk.Label(customize, text="Font Size", fg="white", bg="#333333").pack(pady=5)
-            font_size_var = tk.IntVar(value=self.wm.config.get("font_size", 12))
-            tk.OptionMenu(customize, font_size_var, 10, 12, 14, 16, 
-                         command=self.set_font_size).pack(pady=5)
-            tk.Label(customize, text="Cursor Theme", fg="white", bg="#333333").pack(pady=5)
-            cursor_var = tk.StringVar(value=self.wm.config.get("cursor", "arrow"))
-            tk.OptionMenu(customize, cursor_var, "arrow", "hand2", "crosshair", 
-                         command=self.set_cursor).pack(pady=5)
-            tk.Label(customize, text="Session Timeout (minutes)", fg="white", bg="#333333").pack(pady=5)
-            timeout_var = tk.IntVar(value=self.wm.config.get("session_timeout", 1800) // 60)
-            tk.Entry(customize, textvariable=timeout_var, bg="#555555", fg="white").pack(pady=5)
-            tk.Button(customize, text="Set Timeout", 
-                     command=lambda: self.set_session_timeout(timeout_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            # Accessibility tab
-            accessibility = ttk.Frame(notebook)
-            notebook.add(accessibility, text="Accessibility")
-            tk.Button(accessibility, text="Toggle Screen Reader", 
-                     command=self.wm.accessibility.toggle_screen_reader, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(accessibility, text="Toggle High Contrast", 
-                     command=self.wm.accessibility.toggle_high_contrast, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(accessibility, text="Open Magnifier", 
-                     command=self.wm.magnifier.open, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(accessibility, text="Open Virtual Keyboard", 
-                     command=self.wm.virtual_keyboard.open, 
-                     bg="#555555", fg="white").pack(pady=5)
-
-            # Security tab
-            security = ttk.Frame(notebook)
-            notebook.add(security, text="Security")
-            tk.Button(security, text="Configure Firewall", 
-                     command=self.configure_firewall, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(security, text="View Audit Log", 
-                     command=self.view_audit_log, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(security, text="Open File Encryption", 
-                     command=self.wm.file_encryption.open, 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def set_icon_size(self, size):
-        """Set desktop icon size."""
-        try:
-            self.wm.config["icon_size"] = size
-            self.wm.save_config()
-            self.wm.load_shortcuts()  # Refresh shortcuts
-            self.wm.notifications.send("Control Center", f"Icon size set to {size}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_font_size(self, size):
-        """Set UI font size."""
-        try:
-            self.wm.config["font_size"] = size
-            self.wm.apply_theme(self.wm.config.get("theme", {"bg": "#333333", "fg": "white", 
-                                                            "entry": "#555555"}))
-            self.wm.save_config()
-            self.wm.notifications.send("Control Center", f"Font size set to {size}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_cursor(self, cursor):
-        """Set cursor theme."""
-        try:
-            self.wm.config["cursor"] = cursor
-            self.wm.apply_theme(self.wm.config.get("theme", {"bg": "#333333", "fg": "white", 
-                                                            "entry": "#555555"}))
-            self.wm.save_config()
-            self.wm.notifications.send("Control Center", f"Cursor set to {cursor}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def set_session_timeout(self, minutes):
-        """Set session timeout."""
-        try:
-            self.wm.config["session_timeout"] = minutes * 60
-            self.wm.reset_session_timeout()
-            self.wm.save_config()
-            self.wm.notifications.send("Control Center", f"Session timeout set to {minutes} minutes")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def configure_firewall(self):
-        """Configure firewall settings."""
-        try:
-            window = self.wm.create_window("Firewall Settings", self.build_firewall_ui, 
-                                         width=400, height=300)
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def build_firewall_ui(self, frame):
-        """Build firewall configuration UI."""
-        try:
-            tk.Label(frame, text="Firewall Rules", fg="white", bg="#333333").pack(pady=5)
-            rule_var = tk.StringVar()
-            tk.Entry(frame, textvariable=rule_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            tk.Button(frame, text="Add Rule", 
-                     command=lambda: self.add_firewall_rule(rule_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="View Rules", command=self.view_firewall_rules, 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def add_firewall_rule(self, rule):
-        """Add a firewall rule using iptables."""
-        try:
-            subprocess.run(["sudo", "iptables", "-A", "INPUT"] + rule.split(), 
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.wm.notifications.send("Control Center", "Firewall rule added")
-            self.wm.audit_log(f"Added firewall rule: {rule}")
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def view_firewall_rules(self):
-        """View current firewall rules."""
-        try:
-            output = subprocess.check_output(["sudo", "iptables", "-L"], text=True)
-            self.wm.create_window("Firewall Rules", 
-                                lambda f: tk.Text(f, bg="#555555", fg="white", 
-                                                 font=("Monospace", 10)).insert(tk.END, output))
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-    def view_audit_log(self):
-        """View audit log."""
-        try:
-            log_path = os.path.expanduser("~/.berke0s/audit.log")
-            content = "No audit log found"
-            if os.path.exists(log_path):
-                with open(log_path, 'r') as f:
-                    content = f.read()
-            self.wm.create_window("Audit Log", 
-                                lambda f: tk.Text(f, bg="#555555", fg="white", 
-                                                 font=("Monospace", 10)).insert(tk.END, content))
-        except Exception as e:
-            self.wm.notifications.send("Control Center", f"Error: {str(e)}")
-
-### --- WEATHER APP ---
-class WeatherApp:
-    """Display weather information using OpenWeatherMap API."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.api_key = self.wm.config.get("weather_api_key", "")
-        self.city = self.wm.config.get("weather_city", "Istanbul")
-
-    def open(self):
-        self.wm.create_window("Weather", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the weather app UI."""
-        try:
-            tk.Label(frame, text="Weather", fg="white", bg="#333333").pack(pady=5)
-            tk.Label(frame, text="City:", fg="white", bg="#333333").pack()
-            city_var = tk.StringVar(value=self.city)
-            tk.Entry(frame, textvariable=city_var, bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Update", 
-                     command=lambda: self.update_weather(city_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(frame, text="API Key:", fg="white", bg="#333333").pack()
-            api_var = tk.StringVar(value=self.api_key)
-            tk.Entry(frame, textvariable=api_var, bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Set API Key", 
-                     command=lambda: self.set_api_key(api_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.weather_label = tk.Label(frame, text="Fetching weather...", 
-                                        fg="white", bg="#333333")
-            self.weather_label.pack(pady=5)
-            self.update_weather(self.city)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def set_api_key(self, key):
-        """Set OpenWeatherMap API key."""
-        try:
-            self.api_key = key
-            self.wm.config["weather_api_key"] = key
-            self.wm.save_config()
-            self.wm.notifications.send("Weather", "API key updated")
-        except Exception as e:
-            self.wm.notifications.send("Weather", f"Error: {str(e)}")
-
-    def update_weather(self, city):
-        """Fetch and display weather data."""
-        try:
-            if not self.api_key:
-                self.weather_label.config(text="Please set API key")
-                return
-            self.city = city
-            self.wm.config["weather_city"] = city
-            self.wm.save_config()
-            response = requests.get(
-                f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={self.api_key}&units=metric"
-            )
-            data = response.json()
-            if data["cod"] == 200:
-                weather = (
-                    f"City: {data['name']}\n"
-                    f"Temperature: {data['main']['temp']}°C\n"
-                    f"Condition: {data['weather'][0]['description'].title()}\n"
-                    f"Humidity: {data['main']['humidity']}%\n"
-                    f"Wind: {data['wind']['speed']} m/s"
-                )
-                self.weather_label.config(text=weather)
-            else:
-                self.weather_label.config(text=f"Error: {data['message']}")
-        except Exception as e:
-            self.weather_label.config(text=f"Error: {str(e)}")
-
-### --- TASK SCHEDULER ---
-class TaskScheduler:
-    """Schedule system tasks using cron."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Task Scheduler", self.build_ui, width=600, height=400)
-
-    def build_ui(self, frame):
-        """Build the task scheduler UI."""
-        try:
-            tk.Label(frame, text="Scheduled Tasks", fg="white", bg="#333333").pack(pady=5)
-            self.task_list = tk.Listbox(frame, bg="#555555", fg="white")
-            self.task_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            tk.Button(frame, text="Add Task", command=self.add_task, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Remove Task", command=self.remove_task, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            self.refresh_tasks()
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def refresh_tasks(self):
-        """Refresh task list."""
-        try:
-            self.task_list.delete(0, tk.END)
-            crontab = subprocess.check_output(["crontab", "-l"], text=True, 
-                                             stderr=subprocess.DEVNULL)
-            for line in crontab.splitlines():
-                if line.strip() and not line.startswith("#"):
-                    self.task_list.insert(tk.END, line)
-        except:
-            self.task_list.insert(tk.END, "No tasks found")
-
-    def add_task(self):
-        """Add a new scheduled task."""
-        try:
-            window = self.wm.create_window("Add Task", self.build_task_ui, 
-                                         width=400, height=300)
-        except Exception as e:
-            self.wm.notifications.send("Task Scheduler", f"Error: {str(e)}")
-
-    def build_task_ui(self, frame):
-        """Build the task creation UI."""
-        try:
-            tk.Label(frame, text="Schedule (cron format):", fg="white", bg="#333333").pack()
-            schedule_var = tk.StringVar(value="0 0 * * *")  # Daily at midnight
-            tk.Entry(frame, textvariable=schedule_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            tk.Label(frame, text="Command:", fg="white", bg="#333333").pack()
-            command_var = tk.StringVar()
-            tk.Entry(frame, textvariable=command_var, bg="#555555", fg="white").pack(fill=tk.X, padx=5)
-            tk.Button(frame, text="Add", 
-                     command=lambda: self.save_task(schedule_var.get(), command_var.get()), 
-                     bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def save_task(self, schedule, command):
-        """Save a new cron task."""
-        try:
-            crontab = subprocess.check_output(["crontab", "-l"], text=True, 
-                                             stderr=subprocess.DEVNULL)
-            with open("/tmp/crontab", "w") as f:
-                f.write(crontab + f"{schedule} {command}\n")
-            subprocess.run(["crontab", "/tmp/crontab"], stdout=subprocess.DEVNULL)
-            self.refresh_tasks()
-            self.wm.notifications.send("Task Scheduler", "Task added")
-            self.wm.audit_log(f"Added cron task: {schedule} {command}")
-        except Exception as e:
-            self.wm.notifications.send("Task Scheduler", f"Error: {str(e)}")
-
-    def remove_task(self):
-        """Remove a scheduled task."""
-        try:
-            selected = self.task_list.get(self.task_list.curselection()[0])
-            crontab = subprocess.check_output(["crontab", "-l"], text=True, 
-                                             stderr=subprocess.DEVNULL)
-            with open("/tmp/crontab", "w") as f:
-                for line in crontab.splitlines():
-                    if line.strip() != selected.strip():
-                        f.write(line + "\n")
-            subprocess.run(["crontab", "/tmp/crontab"], stdout=subprocess.DEVNULL)
-            self.refresh_tasks()
-            self.wm.notifications.send("Task Scheduler", "Task removed")
-            self.wm.audit_log(f"Removed cron task: {selected}")
-        except Exception as e:
-            self.wm.notifications.send("Task Scheduler", f"Error: {str(e)}")
-
-### --- FILE ENCRYPTION TOOL ---
-class FileEncryptionTool:
-    """Encrypt and decrypt files."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.key = None
-
-    def open(self):
-        self.wm.create_window("File Encryption", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the file encryption UI."""
-        try:
-            tk.Label(frame, text="File Encryption", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(frame, text="Encrypt File", command=self.encrypt_file, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Decrypt File", command=self.decrypt_file, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Label(frame, text="Password:", fg="white", bg="#333333").pack()
-            self.password_var = tk.StringVar()
-            tk.Entry(frame, textvariable=self.password_var, show="*", 
-                    bg="#555555", fg="white").pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def generate_key(self, password):
-        """Generate encryption key from password."""
-        try:
-            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-            from cryptography.hazmat.primitives import hashes
-            salt = b"berke0s_salt"
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=salt,
-                iterations=100000
-            )
-            self.key = kdf.derive(password.encode())
-        except Exception as e:
-            self.wm.notifications.send("File Encryption", f"Error: {str(e)}")
-
-    def encrypt_file(self):
-        """Encrypt a file."""
-        try:
-            from cryptography.fernet import Fernet
-            filename = filedialog.askopenfilename()
-            if not filename or not self.password_var.get():
-                return
-            self.generate_key(self.password_var.get())
-            fernet = Fernet(base64.urlsafe_b64encode(self.key))
-            with open(filename, 'rb') as f:
-                data = f.read()
-            encrypted = fernet.encrypt(data)
-            with open(filename + ".enc", 'wb') as f:
-                f.write(encrypted)
-            self.wm.notifications.send("File Encryption", f"Encrypted {filename}")
-            self.wm.audit_log(f"Encrypted file: {filename}")
-        except Exception as e:
-            self.wm.notifications.send("File Encryption", f"Error: {str(e)}")
-
-    def decrypt_file(self):
-        """Decrypt a file."""
-        try:
-            from cryptography.fernet import Fernet
-            filename = filedialog.askopenfilename(filetypes=[("Encrypted", "*.enc")])
-            if not filename or not self.password_var.get():
-                return
-            self.generate_key(self.password_var.get())
-            fernet = Fernet(base64.urlsafe_b64encode(self.key))
-            with open(filename, 'rb') as f:
-                encrypted = f.read()
-            decrypted = fernet.decrypt(encrypted)
-            with open(filename[:-4], 'wb') as f:
-                f.write(decrypted)
-            self.wm.notifications.send("File Encryption", f"Decrypted {filename}")
-            self.wm.audit_log(f"Decrypted file: {filename}")
-        except Exception as e:
-            self.wm.notifications.send("File Encryption", f"Error: {str(e)}")
-
-### --- VIRTUAL KEYBOARD ---
-class VirtualKeyboard:
-    """On-screen keyboard for accessibility."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.window = None
-        self.visible = False
-
-    def open(self):
-        if not self.visible:
-            self.window = self.wm.create_window("Virtual Keyboard", self.build_ui, 
-                                              width=600, height=200, y=self.wm.root.winfo_screenheight()-230)
-            self.visible = True
-        else:
-            self.wm.close_window(self.window)
-            self.visible = False
-            self.window = None
-
-    def build_ui(self, frame):
-        """Build the virtual keyboard UI."""
-        try:
-            rows = [
-                "` 1 2 3 4 5 6 7 8 9 0 - = Backspace".split(),
-                "Tab q w e r t y u i o p [ ] \\".split(),
-                "Caps a s d f g h j k l ; ' Enter".split(),
-                "Shift z x c v b n m , . / Shift".split(),
-                "Ctrl Alt Space Alt Ctrl".split()
-            ]
-            for row in rows:
-                row_frame = tk.Frame(frame, bg="#333333")
-                row_frame.pack(fill=tk.X)
-                for key in row:
-                    tk.Button(row_frame, text=key, 
-                             command=lambda k=key: self.type_key(k), 
-                             bg="#555555", fg="white", width=4).pack(side=tk.LEFT, padx=1)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def type_key(self, key):
-        """Simulate key press."""
-        try:
-            if key == "Backspace":
-                self.wm.root.event_generate("<BackSpace>")
-            elif key == "Enter":
-                self.wm.root.event_generate("<Return>")
-            elif key == "Tab":
-                self.wm.root.event_generate("<Tab>")
-            elif key == "Space":
-                self.wm.root.event_generate("<space>")
-            elif key == "Shift":
-                pass  # Toggle shift state if needed
-            elif key == "Ctrl":
-                pass
-            elif key == "Alt":
-                pass
-            elif key == "Caps":
-                pass
-            else:
-                self.wm.root.event_generate(f"<Key-{key}>")
-            self.wm.accessibility.read_widget(tk.Event())  # Trigger screen reader
-        except Exception as e:
-            self.wm.notifications.send("Virtual Keyboard", f"Error: {str(e)}")
-
-### --- MAGNIFIER TOOL ---
-class MagnifierTool:
-    """Screen magnifier for accessibility."""
-    def __init__(self, wm):
-        self.wm = wm
-        self.visible = False
-        self.window = None
-        self.zoom = 2
-
-    def open(self):
-        if not self.visible:
-            self.window = self.wm.create_window("Magnifier", self.build_ui, 
-                                              width=200, height=200)
-            self.visible = True
-            self.update_magnifier()
-        else:
-            self.wm.close_window(self.window)
-            self.visible = False
-            self.window = None
-
-    def build_ui(self, frame):
-        """Build the magnifier UI."""
-        try:
-            self.canvas = tk.Canvas(frame, bg="black", width=200, height=200)
-            self.canvas.pack(fill=tk.BOTH, expand=True)
-            tk.Button(frame, text="Zoom In", command=self.zoom_in, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-            tk.Button(frame, text="Zoom Out", command=self.zoom_out, 
-                     bg="#555555", fg="white").pack(side=tk.LEFT, padx=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def zoom_in(self):
-        """Increase zoom level."""
-        try:
-            self.zoom = min(self.zoom + 0.5, 5)
-            self.update_magnifier()
-        except:
-            pass
-
-    def zoom_out(self):
-        """Decrease zoom level."""
-        try:
-            self.zoom = max(self.zoom - 0.5, 1)
-            self.update_magnifier()
-        except:
-            pass
-
-    def update_magnifier(self):
-        """Update magnifier display."""
-        try:
-            if not self.visible:
-                return
-            x, y = self.wm.root.winfo_pointerxy()
-            screenshot = ImageGrab.grab(bbox=(x-50, y-50, x+50, y+50))
-            zoomed = screenshot.resize((int(100 * self.zoom), int(100 * self.zoom)), Image.LANCZOS)
-            self.photo = ImageTk.PhotoImage(zoomed)
-            self.canvas.delete("all")
-            self.canvas.create_image(100, 100, image=self.photo)
-            self.wm.root.after(50, self.update_magnifier)
-        except:
-            pass
-
-### --- PERFORMANCE OPTIMIZER ---
-class PerformanceOptimizer:
-    """Optimize system performance."""
-    def __init__(self, wm):
-        self.wm = wm
-
-    def open(self):
-        self.wm.create_window("Performance Optimizer", self.build_ui, width=400, height=300)
-
-    def build_ui(self, frame):
-        """Build the optimizer UI."""
-        try:
-            tk.Label(frame, text="Performance Optimizer", fg="white", bg="#333333").pack(pady=5)
-            tk.Button(frame, text="Clear Cache", command=self.clear_cache, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Kill Unused Processes", command=self.kill_unused, 
-                     bg="#555555", fg="white").pack(pady=5)
-            tk.Button(frame, text="Optimize Memory", command=self.optimize_memory, 
-                     bg="#555555", fg="white").pack(pady=5)
-            self.status_label = tk.Label(frame, text="Ready", fg="white", bg="#333333")
-            self.status_label.pack(pady=5)
-        except Exception as e:
-            tk.Label(frame, text=f"Error: {str(e)}", fg="white", 
-                     bg="#333333").pack(padx=10, pady=10)
-
-    def clear_cache(self):
-        """Clear system cache."""
-        try:
-            subprocess.run(["sudo", "sync"], stdout=subprocess.DEVNULL)
-            subprocess.run(["sudo", "sh", "-c", "echo 3 > /proc/sys/vm/drop_caches"], 
-                          stdout=subprocess.DEVNULL)
-            self.status_label.config(text="Cache cleared")
-            self.wm.notifications.send("Optimizer", "System cache cleared")
-            self.wm.audit_log("Cleared system cache")
-        except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)}")
-
-    def kill_unused(self):
-        """Kill unused processes."""
-        try:
-            for proc in psutil.process_iter(['pid', 'name']):
-                if proc.name() in ['idle', 'bash']:  # Safe list
-                    continue
-                if proc.cpu_percent(interval=0.1) < 1:
-                    subprocess.run(["sudo", "kill", str(proc.pid)], stdout=subprocess.DEVNULL)
-            self.status_label.config(text="Unused processes terminated")
-            self.wm.notifications.send("Optimizer", "Unused processes terminated")
-            self.wm.audit_log("Terminated unused processes")
-        except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)}")
-
-    def optimize_memory(self):
-        """Optimize memory usage."""
-        try:
-            self.clear_cache()
-            self.kill_unused()
-            self.status_label.config(text="Memory optimized")
-            self.wm.notifications.send("Optimizer", "Memory optimized")
-            self.wm.audit_log("Optimized system memory")
-        except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)}")
-
-### --- ENHANCED WINDOW MANAGER ---
-class WindowManager:
-    """Enhanced window manager with transparency and navigation."""
-    def __init__(self):
-        """Initialize the window manager."""
-        self.root = tk.Tk()
-        self.root.title("Berke0S")
-        self.root.attributes('-fullscreen', True)
-        self.root.configure(bg="#333333")
-        self.windows = {}
-        self.notifications = NotificationSystem(self)
-        self.session_manager = SessionManager(self)
-        self.config = load_config()
-        self.taskbar = None
-        self.start_btn = None
-        self.desktop = None
-        self.background_video = None
-        self.shortcuts = {}
-        self.pinned_apps = self.config.get("pinned_apps", ["File Manager", "Code Editor", "Notes"])
-        self.virtual_desktops = [{}]
-        self.current_desktop = 0
-        self.file_associations = {
-            '.txt': self.text_editor,
-            '.py': self.code_editor,
-            '.sh': self.code_editor,
-            '.c': self.code_editor,
-            '.png': self.image_viewer,
-            '.jpg': self.image_viewer,
-            '.mp3': self.media_player,
-            '.mp4': self.media_player,
-            '.note': self.notes
-        }
-        self.recent_files = []
-        self.current_user = None
-        self.accessibility = AccessibilityManager(self)
-        self.clipboard = ClipboardManager(self)
-        self.magnifier = MagnifierTool(self)
-        self.virtual_keyboard = VirtualKeyboard(self)
-        self.file_encryption = FileEncryptionTool(self)
-        self.setup_ui()
-        self.setup_file_associations()
-        self.start_session_timeout()
-        self.root.bind("<Alt-Tab>", self.switch_window)
-
-    def switch_window(self, event):
-        """Switch between open windows with Alt+Tab."""
-        try:
-            window_list = list(self.virtual_desktops[self.current_desktop].keys())
-            if not window_list:
-                return
-            current = self.root.focus_get()
-            idx = window_list.index(current) if current in window_list else -1
-            next_window = window_list[(idx + 1) % len(window_list)]
-            next_window.lift()
-            next_window.focus_set()
-            self.wm.notifications.send("Window Manager", f"Switched to {self.windows[next_window]['title']}")
-        except:
-            pass
-
-    def create_window(self, title, build_func, x=100, y=100, width=400, height=300):
-        """Create a new window with transparency."""
-        try:
-            window = tk.Toplevel(self.root)
-            window.title(title)
-            window.geometry(f"{width}x{height}+{x}+{y}")
-            window.configure(bg="#333333")
-            window.attributes('-alpha', self.config.get("window_transparency", 0.95))
-            frame = tk.Frame(window, bg="#333333")
-            frame.pack(fill=tk.BOTH, expand=True)
-            build_func(frame)
-            self.windows[window] = {"title": title, "x": x, "y": y, "width": width, 
-                                   "height": height, "desktop": self.current_desktop}
-            self.virtual_desktops[self.current_desktop][window] = self.windows[window]
-            window.protocol("WM_DELETE_WINDOW", lambda: self.close_window(window))
-            window.bind("<Configure>", lambda e: self.snap_window(window, e))
-            window.bind("<Map>", lambda e: self.animate_window(window, "map"))
-            window.bind("<Unmap>", lambda e: self.animate_window(window, "unmap"))
-            self.update_taskbar()
-            self.reset_session_timeout()
-            return window
-        except Exception as e:
-            self.notifications.send("Window Manager", f"Error: {str(e)}")
-            return None
-
-    def update_taskbar(self):
-        """Update taskbar with window previews."""
-        try:
-            for widget in self.taskbar_frame.winfo_children():
-                if widget != self.start_btn and widget != self.pinned_frame:
-                    widget.destroy()
-            for window in self.virtual_desktops[self.current_desktop]:
-                title = self.windows[window]["title"][:10]
-                tk.Button(self.taskbar_frame, text=title, 
-                         command=lambda w=window: w.lift(), 
-                         bg="#555555", fg="white").pack(side=tk.LEFT, padx=2)
-        except:
-            pass
-
-    def audit_log(self, action):
-        """Log user actions."""
-        try:
-            log_path = os.path.expanduser("~/.berke0s/audit.log")
-            with open(log_path, "a") as f:
-                f.write(f"{datetime.now()}: {self.current_user[0]} - {action}\n")
-        except:
-            pass
-
-### --- MAIN ---
 if __name__ == "__main__":
-    try:
-        wm = WindowManager()
-        # Initialize applications
-        file_manager = FileManager(wm)
-        text_editor = TextEditor(wm)
-        code_editor = CodeEditor(wm)
-        calculator = Calculator(wm)
-        web_browser = WebBrowser(wm)
-        system_info = SystemInfo(wm)
-        package_manager = PackageManager(wm)
-        task_manager = TaskManager(wm)
-        media_player = MediaPlayer(wm)
-        image_viewer = ImageViewer(wm)
-        presentation = PresentationApp(wm)
-        control_center = ControlCenter(wm)
-        disk_manager = DiskManager(wm)
-        terminal = TerminalEmulator(wm)
-        system_monitor = SystemMonitorWidget(wm)
-        screenshot = ScreenshotUtility(wm)
-        backup = BackupUtility(wm)
-        email_client = EmailClient(wm)
-        calendar = CalendarApp(wm)
-        notes = NotesApp(wm)
-        network_monitor = NetworkMonitor(wm)
-        log_viewer = SystemDiagnostics(wm)
-        task_scheduler = TaskScheduler(wm)
-        file_encryption = FileEncryptionTool(wm)
-        weather = WeatherApp(wm)
-        optimizer = PerformanceOptimizer(wm)
-
-        # Assign apps to window manager
-        wm.file_manager = file_manager
-        wm.text_editor = text_editor
-        wm.code_editor = code_editor
-        wm.calculator = calculator
-        wm.web_browser = web_browser
-        wm.system_info = system_info
-        wm.package_manager = package_manager
-        wm.task_manager = task_manager
-        wm.media_player = media_player
-        wm.image_viewer = image_viewer
-        wm.presentation = presentation
-        wm.control_center = control_center
-        wm.disk_manager = disk_manager
-        wm.terminal = terminal
-        wm.system_monitor = system_monitor
-        wm.screenshot = screenshot
-        wm.backup = backup
-        wm.email_client = email_client
-        wm.calendar = calendar
-        wm.notes = notes
-        wm.network_monitor = network_monitor
-        wm.log_viewer = log_viewer
-        wm.task_scheduler = task_scheduler
-        wm.file_encryption = file_encryption
-        wm.weather = weather
-        wm.optimizer = optimizer
-
-        # Start menu
-        def show_start_menu(event):
-            """Display the start menu with all applications."""
-            try:
-                menu = tk.Menu(wm.root, tearoff=0, bg="#333333", fg="white")
-                apps = {
-                    "File Explorer": file_manager.open,
-                    "Text Editor": text_editor.open,
-                    "Code Editor": code_editor.open,
-                    "Calculator": calculator.open,
-                    "Web Browser": web_browser.open,
-                    "System Info": system_info.open,
-                    "Package Manager": package_manager.open,
-                    "Task Manager": task_manager.open,
-                    "Media Player": lambda: media_player.play(os.path.expanduser("~/test.mp3")),
-                    "Image Viewer": lambda: image_viewer.open_file(os.path.expanduser("~/test.png")),
-                    "Presentation": presentation.open,
-                    "Control Center": control_center.open,
-                    "Disk Manager": disk_manager.open,
-                    "Terminal": terminal.initialize,
-                    "System Monitor": system_monitor.toggle,
-                    "Screenshot": screenshot.take_screenshot,
-                    "Backup Utility": backup.restore,
-                    "Email Client": email_client.open,
-                    "Calendar": calendar.open,
-                    "Notes": notes.open,
-                    "Network Monitor": network_monitor.toggle,
-                    "System Diagnostics": log_viewer.open,
-                    "Task Scheduler": task_scheduler.open,
-                    "File Encryption": file_encryption.open,
-                    "Weather": weather.open,
-                    "Performance Optimizer": optimizer.open
-                }
-                pinned_menu = tk.Menu(menu, tearoff=0, bg="#333333", fg="white")
-                for app in wm.pinned_apps:
-                    if app in apps:
-                        pinned_menu.add_command(label=app, command=apps[app])
-                        pinned_menu.add_command(label=f"Unpin {app}", 
-                                               command=lambda a=app: wm.unpin_app(a))
-                for app, cmd in apps.items():
-                    if app not in wm.pinned_apps:
-                        pinned_menu.add_command(label=f"Pin {app}", 
-                                               command=lambda a=app: wm.pin_app(a))
-                menu.add_cascade(label="Pinned Apps", menu=pinned_menu)
-                for name, cmd in apps.items():
-                    menu.add_command(label=name, command=cmd)
-                recent_menu = tk.Menu(menu, tearoff=0, bg="#333333", fg="white")
-                for file in wm.recent_files:
-                    recent_menu.add_command(label=os.path.basename(file), 
-                                           command=lambda f=file: wm.open_file(f))
-                menu.add_cascade(label="Recent Files", menu=recent_menu)
-                menu.add_separator()
-                menu.add_command(label="Shutdown", command=wm.shutdown)
-                menu.add_command(label="Reboot", command=wm.reboot)
-                menu.add_command(label="Log Out", command=wm.logout)
-                menu.post(wm.start_btn.winfo_rootx(), wm.start_btn.winfo_rooty() - 300)
-                wm.audit_log("Opened start menu")
-            except Exception as e:
-                wm.notifications.send("Start Menu", f"Error: {str(e)}")
-
-        wm.start_btn.bind("<Button-1>", show_start_menu)
-
-        # Desktop context menu
-        def show_desktop_menu(event):
-            """Display context menu on desktop right-click."""
-            try:
-                menu = tk.Menu(wm.root, tearoff=0, bg="#333333", fg="white")
-                menu.add_command(label="New Folder", command=lambda: file_manager.create_folder())
-                menu.add_command(label="New Text File", command=lambda: text_editor.new_file())
-                menu.add_command(label="New Note", command=lambda: notes.open())
-                menu.add_command(label="Open Terminal", command=lambda: terminal.initialize())
-                menu.add_separator()
-                menu.add_command(label="Control Center", command=lambda: control_center.open())
-                # If sticky note functionality exists, add it here
-                # menu.add_command(label="Sticky Note", command=lambda: wm.sticky_note())
-                menu.post(event.x_root, event.y_root)
-                wm.audit_log("Opened desktop context menu")
-            except Exception as e:
-                wm.notifications.send("Desktop", f"Error: {str(e)}")
-
-        wm.desktop.bind("<Button-3>", show_desktop_menu)
-
-        # Keyboard shortcuts
-        def handle_shortcuts(self, event):
-            """Handle global keyboard shortcuts."""
-            try:
-                if event.keysym == 't' and event.state & 0x4 and event.state & 0x1:  # Ctrl+Alt+T
-                    terminal.initialize()
-                    wm.audit_log("Opened terminal via Ctrl+Alt+T")
-                elif event.keysym == 'f' and event.state & 0x4:  # Ctrl+F
-                    file_manager.open()
-                    wm.audit_log("Opened file explorer via Ctrl+F")
-                elif event.keysym == 'e' and event.state & 0x4:  # Ctrl+E
-                    code_editor.open()
-                    wm.audit_log("Opened code editor via Ctrl+E")
-                elif event.keysym == 's' and event.state & 0x4:  # Ctrl+S
-                    wm.search_var.focus_set()
-                    wm.audit_log("Focused search bar via Ctrl+S")
-            except Exception as e:
-                pass
-        wm.root.bind("<KeyPress>", handle_shortcuts)
-
-        # Restore session for user
-        session = wm.session_manager.load_session()
-        for win in session["open_windows"]:
-            try:
-                wm.create_window(win["title"], 
-                                lambda f: tk.Label(f, text="Restored Window", fg="white", 
-                                                  bg="#333333").pack(),
-                                x=win["x"], y=win["y"], width=win["width"], height=win["height"])
-                wm.audit_log(f"Restored window: {win['title']}")
-            except:
-                pass
-        
-        # Apply saved configuration
-        wm.load_config()
-        
-        # Show login screen
-        wm.show_login()
-        
-        # Main loop
-        wm.root.mainloop()
-    except Exception as e:
-        print(f"Fatal error: {str(e)}")
-    finally:
-        wm.cleanup()
-        sys.exit(1)
+    main()
